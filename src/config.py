@@ -3,6 +3,7 @@ from pydantic import SecretStr, Field
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from mem0 import Memory
+from transformers import AutoTokenizer
 
 
 class AppConfig(BaseSettings):
@@ -82,4 +83,6 @@ config = {
         "config": {"model": "Qwen/Qwen3-Embedding-0.6B"},
     },
 }
+
 m = Memory.from_config(config)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-Embedding-0.6B")

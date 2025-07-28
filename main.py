@@ -1,16 +1,15 @@
-from src.config import m
+from src.tools.codebase import output_directory_tree
+from src.config import tokenizer
+import asyncio
 
 
 if __name__ == "__main__":
-    m.add(
-        [{"role": "user", "content": "the name of Laura's dog is Arnoph"}],
-        user_id="test",
-    )
+    result = asyncio.run(output_directory_tree())  # Returns List[str]
 
-    # Add user_id to the search call
-    search_results = m.search("What is the name of Laura's dog?", user_id="test")
-    print("Connection working!" if search_results else "Failed")
+    # Join the list into a single string
+    full_text = "\n".join(result)
 
-    # Optional: Print the search results to see what was found
-    if search_results:
-        print("Search results:", search_results)
+    # Now tokenize the string
+    token_count = len(tokenizer.encode(full_text))
+    print("tokens used:", token_count)
+    print(result)

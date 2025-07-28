@@ -1,140 +1,132 @@
-"""
-codebase.py – single public helper `inspect_cwd()` for rich CWD inspection.
-"""
-
-from __future__ import annotations
-
+import asyncio
+import aiofiles
 import ast
+import json
+from pydantic import BaseModel
 import os
-import stat as _stat
-from datetime import datetime
-from pathlib import Path
-from typing import List, Tuple
+from typing import List, Set
+import fnmatch
 
 
-# --------------------------------------------------------------------------- #
-# Internal helpers
-# --------------------------------------------------------------------------- #
-def _format_time(epoch: float) -> str:
-    """Return ISO-8601 local-time string from epoch seconds."""
-    return datetime.fromtimestamp(epoch).isoformat(sep=" ", timespec="seconds")
+class FileAnalysis(BaseModel):
+    file_path: str
+    functions: list[str]
+    imports: list[str]
+    classes: list[str]
+    tokens_count: int
 
 
-def _type_hint(p: Path) -> str:
-    """Return a short type hint for a path."""
-    if p.is_dir():
-        return "dir"
-    suffix = p.suffix.lower()
-    if suffix == ".py":
-        return "py"
-    if suffix in {".md", ".markdown"}:
-        return "md"
-    if suffix in {".txt", ".text"}:
-        return "txt"
-    if suffix in {".json"}:
-        return "json"
-    if suffix in {".yml", ".yaml"}:
-        return "yaml"
-    return suffix.lstrip(".") or "file"
+async def parse_gitignore(root_path: str) -> tuple[Set[str], Set[str]]:
+    """Parse .gitignore file and return patterns for dirs and files to ignore"""
 
+    gitignore_path = os.path.join(root_path, ".gitignore")
+    ignore_dirs = set()
+    ignore_files = set()
 
-def _tree(root: Path, max_depth: int = 6) -> str:
-    """
-    Build an indented tree string for everything under `root`.
-    Each line contains: name | last-mod | size | type-hint
-    """
-    lines: List[str] = []
+    if not os.path.exists(gitignore_path):
+        return ignore_dirs, ignore_files
 
-    def _walk(path: Path, prefix: str = "", depth: int = 0) -> None:
-        if depth > max_depth:
-            return
-        try:
-            st = path.stat()
-        except OSError:
-            st = None
-
-        # Build annotation
-        if st is None:
-            meta = "<no permission>"
-        else:
-            mtime = _format_time(st.st_mtime)
-            if path.is_dir():
-                meta = f"{mtime}  <dir>"
-            else:
-                meta = f"{mtime}  {st.st_size:>8} bytes"
-
-        hint = _type_hint(path)
-        lines.append(f"{prefix}{path.name}  |  {meta}  |  {hint}")
-
-        if path.is_dir():
-            try:
-                entries = sorted(path.iterdir())
-            except OSError:
-                return
-            for idx, entry in enumerate(entries):
-                is_last = idx == len(entries) - 1
-                next_prefix = prefix + ("    " if is_last else "│   ")
-                pointer = "└── " if is_last else "├── "
-                _walk(entry, next_prefix + pointer, depth + 1)
-
-    _walk(root)
-    return "\n".join(lines)
-
-
-def _ast_summary(py_file: Path) -> str:
-    """
-    Return a compact AST dump for a Python file:
-    imports, top-level classes, and functions.
-    """
     try:
-        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-    except Exception as exc:
-        return f"    <parse error: {exc}>"
+        async with aiofiles.open(gitignore_path, "r", encoding="utf-8") as f:
+            lines = await f.readlines()
 
-    parts: List[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                parts.append(f"import {alias.name}")
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            names = ", ".join(a.name for a in node.names)
-            parts.append(f"from {module} import {names}")
-        elif isinstance(node, ast.ClassDef):
-            parts.append(f"class {node.name}")
-        elif isinstance(node, ast.FunctionDef):
-            parts.append(f"def {node.name}()")
-        elif isinstance(node, ast.AsyncFunctionDef):
-            parts.append(f"async def {node.name}()")
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
 
-    if not parts:
-        return "    <empty module>"
-    return "\n".join(f"    {line}" for line in parts)
+                # Patterns ending with / are directories
+                if line.endswith("/"):
+                    ignore_dirs.add(line.rstrip("/"))
+                else:
+                    # Check if pattern contains wildcards
+                    if any(c in line for c in ["*", "?", "[", "]"]):
+                        # We'll handle wildcards during traversal
+                        ignore_files.add(line)
+                    else:
+                        if "/" in line:
+                            # This is a path with subdirectories
+                            parts = line.split("/")
+                            if parts[-1]:
+                                ignore_files.add(parts[-1])
+                            else:
+                                ignore_dirs.add(parts[-2])
+                        else:
+                            # Simple filename
+                            ignore_files.add(line)
+    except Exception as e:
+        print(f"⚠️ Could not parse .gitignore: {str(e)}")
 
-
-# --------------------------------------------------------------------------- #
-# Public API
-# --------------------------------------------------------------------------- #
-def inspect_cwd() -> str:
-    """
-    Return a rich, human-readable string describing the current working directory.
-    """
-    root = Path.cwd().resolve()
-    header = f"CWD: {root}\n"
-    tree_block = _tree(root)
-    py_files = sorted(root.rglob("*.py"))
-
-    ast_blocks: List[str] = []
-    for py in py_files:
-        rel = py.relative_to(root)
-        ast_blocks.append(f"\nAST summary for {rel}:")
-        ast_blocks.append(_ast_summary(py))
-
-    return header + "\n" + tree_block + "".join(ast_blocks)
+    return ignore_dirs, ignore_files
 
 
-# --------------------------------------------------------------------------- #
-# CLI convenience
-# --------------------------------------------------------------------------- #
-if __name__ == "__main__":
-    print(inspect_cwd())
+def should_ignore(path: str, ignore_dirs: Set[str], ignore_files: Set[str]) -> bool:
+    """Check if path should be ignored based on gitignore patterns"""
+    rel_path = os.path.relpath(path, os.getcwd())
+
+    # Check directory patterns
+    for part in rel_path.split(os.sep):
+        if part in ignore_dirs:
+            return True
+
+    # Check file patterns with wildcards
+    for pattern in ignore_files:
+        if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(
+            os.path.basename(rel_path), pattern
+        ):
+            return True
+
+    return False
+
+
+async def process_file(file_path: str) -> str:
+    try:
+        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            print(f"📄 Processed file: {file_path}")
+            return content
+    except UnicodeDecodeError:
+        print(f"⚠️ Could not read file (binary?): {file_path}")
+    except Exception as e:
+        print(f"❌ Error processing file {file_path}: {str(e)}")
+    return ""
+
+
+async def output_directory_tree(base_file_path: str = os.getcwd()) -> List[str]:
+    """Output directory tree while ignoring virtual envs, config folders, and .lock files"""
+
+    print(f"🚀 Starting async analysis of {base_file_path}")
+
+    # Dossiers à ignorer (venv, node_modules, etc.)
+    IGNORE_DIRS = {
+        "venv",
+        ".venv",
+        "env",
+        ".env",
+        "__pycache__",
+        ".git",
+        "node_modules",
+        ".mypy_cache",
+    }
+
+    # Fichiers à ignorer (.env, *.lock, etc.)
+    IGNORE_FILES = {".env", ".env.local", ".env.dev", ".env.prod", "__init__.py"}
+    IGNORE_EXTENSIONS = {".lock", ".db"}  # <-- Nouveau: extensions à ignorer
+
+    tasks = []
+
+    for root, dirs, files in os.walk(base_file_path, topdown=True):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        for file in files:
+            file_path = os.path.join(root, file)
+
+            # Ignorer les fichiers dans IGNORE_FILES ou avec une extension bloquée
+            if file in IGNORE_FILES or any(
+                file.endswith(ext) for ext in IGNORE_EXTENSIONS
+            ):
+                print(f"⚡ Ignoring file: {file_path}")
+                continue
+
+            tasks.append(process_file(file_path))
+
+    return await asyncio.gather(*tasks)
