@@ -54,6 +54,13 @@ class AsyncContext7Client:
             c in "0123456789abcdefABCDEF" for c in self.encryption_key
         )
 
+    # ---------- add these two methods ----------
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+
     async def close(self) -> None:
         await self.session.close()
 
@@ -157,7 +164,7 @@ class AsyncContext7Client:
         self, query: str, client_ip: Optional[str] = None
     ) -> tuple[str, int, str]:
         """
-        Search Context7 for a library and immediately fetch its documentation.
+        Search Context7 for a library and immediately fetch its documentation  .
 
         Parameters
         ----------
