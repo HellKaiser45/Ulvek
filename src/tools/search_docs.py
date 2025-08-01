@@ -156,6 +156,33 @@ class AsyncContext7Client:
     async def search_and_fetch(
         self, query: str, client_ip: Optional[str] = None
     ) -> tuple[str, int, str]:
+        """
+        Search Context7 for a library and immediately fetch its documentation.
+
+        Parameters
+        ----------
+        query : str
+            Free-text search term (e.g. "react", "pandas", "fastapi").
+        client_ip : str | None, optional
+            Client IP to forward for rate-limiting purposes; encrypted before
+            transmission.
+
+        Returns
+        -------
+        tuple[str, int, str]
+            (documentation_text, total_tokens, library_title)
+            • documentation_text : full documentation string for the best-matched
+              library, or empty string if none found.
+            • total_tokens       : token count reported by Context7 for the
+              returned documentation.
+            • library_title      : human-readable title of the matched library.
+
+        Notes
+        -----
+        The function picks the first result among the top-3 search hits that has
+        more than 100 GitHub stars.  If no such result exists, all three return
+        values are empty/zero.
+        """
         search_res = await self.search_libraries(query, client_ip)
         if search_res.error or not search_res.results:
             return "", 0, ""
