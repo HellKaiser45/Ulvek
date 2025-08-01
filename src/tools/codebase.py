@@ -53,7 +53,24 @@ async def get_non_ignored_files(root_path: str = os.getcwd()) -> list[str]:
 
 
 async def process_file(file_paths: list[str]) -> list[FileAnalysis]:
-    """Async file processing pipeline"""
+    """
+    Asynchronously classify each file in `file_paths` using Magika.
+
+    Parameters
+    ----------
+    file_paths : list[str]
+        Absolute or relative paths to the files to be analysed.
+
+    Returns
+    -------
+    list[FileAnalysis]
+        One entry per file containing:
+        - file_path   : original path
+        - file_type   : Magika label (e.g. "python", "javascript", "markdown")
+        - mime_type   : MIME type string
+        - description : human-readable description
+        - group       : broad category (e.g. "code", "text", "binary")
+    """
     m = await get_magika_instance()
     return [
         FileAnalysis(
