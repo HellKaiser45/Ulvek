@@ -59,8 +59,27 @@ class SearchContent(SearchResult):
 async def search_files(
     ripgrep_query: str, file_or_files: str | list[str]
 ) -> list[SearchContent]:
-    """Async file search with proper I/O handling"""
+    """
+    Search the current working directory for `ripgrep_query` in the given file(s).
 
+    Parameters
+    ----------
+    ripgrep_query : str
+        Plain-text or regex pattern passed to ripgrep.
+    file_or_files : str | list[str]
+        Single file or list of files to search.  Paths may be absolute or relative
+        to the current working directory.  Glob patterns are supported.
+
+    Returns
+    -------
+    list[SearchContent]
+        One item per match, containing:
+        - file metadata (path, type, size, last modified, etc.)
+        - line_number and line_content of the match
+        - content_extract: ±50 lines around the hit, trimmed to blank lines
+        - content_rag_result: list[str] of relevant chunks from the file,
+          produced by the memory/RAG pipeline
+    """
     matches = _get_ripgrep_matches(ripgrep_query, file_or_files)
     results_paths = {match.data.path.text for match in matches}
     files_analysis = await process_file(list(results_paths))
