@@ -12,11 +12,29 @@ from src.tools.search_docs import AsyncContext7Client
 # Pydantic model that groups every “secondary” parameter
 # ------------------------------------------------------------------
 class SearchConfig(BaseModel):
-    limit: int = Field(3, ge=1)
-    library_to_search: str
-    search_in_library: str
-    threshold: float = Field(0.5, ge=0.0, le=1.0)
-    delimiters: tuple[str, ...] = ("----------------------------------------",)
+    limit: int = Field(
+        3,
+        ge=1,
+        description="Maximum number of relevant snippets to return from the memory layer.",
+    )
+    library_to_search: str = Field(
+        ...,
+        description="Library or framework name to search on Context7 (e.g. 'react', 'fastapi').",
+    )
+    search_in_library: str = Field(
+        ...,
+        description="Free-text query used to retrieve the most relevant snippets from the fetched documentation.",
+    )
+    threshold: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="Relevance threshold for Mem0 search; higher values return fewer but more relevant snippets.",
+    )
+    delimiters: tuple[str, ...] = Field(
+        ("----------------------------------------",),
+        description="Strings that delimit logical sections when chunking the documentation text.",
+    )
 
 
 async def gather_docs_context(params: SearchConfig) -> list[str]:
