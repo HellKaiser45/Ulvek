@@ -2,10 +2,8 @@
 interactive_tools.py – synchronous utilities for interactive CLI prompts.
 """
 
-from typing import List, Union
 
-
-def prompt_user(prompt: Union[str, List[str]]) -> str:
+def prompt_user(prompt: str | list[str]) -> str:
     """
     Prompt the user interactively and return the raw string response.
 
