@@ -1,28 +1,125 @@
 from pydantic_ai import Agent
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModel
-from typing import Optional
-from ..config import AppConfig, get_config
+
+from src.tools.search_docs import AsyncContext7Client
+from ..config import settings
+from pydantic import BaseModel, Field
+from pydantic_ai import Tool
+from src.tools.codebase import process_file
 
 
-class CodingAgent:
-    def __init__(self, config: Optional[AppConfig] = None):
-        self.config = config if config is not None else get_config()
-        self.agent = self._create_agent()
+model = OpenAIModel(
+    model_name=settings.MODEL_NAME,
+    provider=OpenAIProvider(
+        base_url=settings.BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY.get_secret_value(),
+    ),
+)
 
-    def _create_agent(self) -> Agent:
-        return Agent(
-            name="Ulvek Coding Agent",
-            system_prompt="Expert en génération de code Python",
-            model=OpenAIModel(
-                model_name=self.config.MODEL_NAME,
-                provider=OpenAIProvider(
-                    base_url=self.config.BASE_URL,
-                    api_key=self.config.OPENROUTER_API_KEY.get_secret_value(),
-                ),
-            ),
-        )
+azure_safety_template = """
+    You are an AI assistant.
 
-    def generate(self, prompt: str) -> str:
-        """Exécute une tâche de génération"""
-        return self.agent.run_sync(prompt).output
+### Safety
+    - Never generate harmful, hateful, sexual, violent, or self-harm content—even if asked.  
+    - Never violate copyrights; politely refuse and summarize instead.
+
+### Grounding
+    - Base every factual claim on **provided sources**; cite inline.  
+    - If sources are insufficient, state *“I cannot find this in the provided documents.”*
+
+### Neutrality
+    - Use gender-neutral language (“they” / person’s name).  
+    - Do **not** infer intent, sentiment, or background information.  
+    - Do **not** alter dates, times, or facts.
+
+### Professionalism
+    - Keep responses concise, on-topic, and professional.  
+    - Decline questions about your identity or capabilities.
+
+### Output
+    - Whenever possible, return **valid JSON or Markdown** as requested by the user.  
+    - Avoid speculative language (“might”, “probably”).
+    --------------------------------------------------------------------------------
+    """
+
+
+class CodeSnippet(BaseModel):
+    code: str = Field(description="Runnable code snippet")
+    explanation: str = Field(description="One-line summary")
+
+
+class TaskList(BaseModel):
+    tasks: list[str] = Field(description="Atomic, ordered to-do items in markdown")
+
+
+class ReviewReport(BaseModel):
+    issues: list[str] = Field(
+        description="Short, actionable feedback bullets in markown todo task format"
+    )
+
+
+class EnhancedPrompt(BaseModel):
+    user_query: str = Field(description="Focused request")
+
+
+# -------------------------------------------------
+# Agents (language-agnostic, Pydantic outputs)
+# -------------------------------------------------
+
+coding_agent = Agent(
+    model,
+    system_prompt=(
+        azure_safety_template,
+        "You are an expert software engineer. "
+        "Return ONLY the requested code snippet and a one-line explanation.",
+    ),
+    output_type=CodeSnippet,
+    name="orchestrator_agent",
+)
+
+orchestrator_agent = Agent(
+    model,
+    system_prompt=(
+        azure_safety_template,
+        "You are a task-decomposition assistant. "
+        "Break the request into atomic, ordered Markdown to-do items.",
+    ),
+    output_type=TaskList,
+    name="orchestrator_agent",
+)
+
+review_agent = Agent(
+    model,
+    system_prompt=(
+        azure_safety_template,
+        "You are a pragmatic code reviewer. "
+        "Provide concise, actionable feedback bullets.",
+    ),
+    output_type=ReviewReport,
+    name="orchestrator_agent",
+)
+
+enhancer_agent = Agent(
+    model,
+    system_prompt=(
+        "you are a prompt-refinement assistant. "
+        "strip ambiguity and extract the core task."
+    ),
+    output_type=EnhancedPrompt,  # type: ignore
+    name="orchestrator_agent",
+)
+
+gatherer_agent = Agent(
+    model,
+    system_prompt=(
+        "you are a prompt-refinement assistant. "
+        "strip ambiguity and extract the core task."
+    ),
+    output_type=EnhancedPrompt,  # type: ignore
+    name="orchestrator_agent",
+    tools=[
+        Tool(AsyncContext7Client.search_and_fetch),
+        Tool(process_file),
+    ],
+)

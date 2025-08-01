@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, Field
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from mem0 import Memory
 from transformers import AutoTokenizer
 
 
@@ -29,22 +28,23 @@ class AppConfig(BaseSettings):
     PROVIDER: str = Field(
         default="openrouter", description="Provider to use for model api"
     )
+    EMBEDDING_MODEL: str = Field(
+        default="Qwen/Qwen3-Embedding-0.6B", description="Embedding model to use"
+    )
+    EMBEDDING_MODEL_DIMS: int = Field(
+        default=1024, description="Embedding model dimensions"
+    )
+    MEMO_LLM_MODEL: str = Field(
+        default="qwen/qwen3-235b-a22b-2507", description="Memory LLM model to use"
+    )
 
 
-def get_config() -> AppConfig:
-    """Charge et valide la configuration"""
-    try:
-        return AppConfig()
-    except Exception as e:
-        print(f"Erreur de configuration : {e}")
-        raise SystemExit(1)
+settings = AppConfig()
 
 
-def configure_cli():
+def configure_cli(settings: AppConfig = settings):
     """Initialize CLI-ready settings with proper error handling"""
     try:
-        settings = AppConfig()
-
         model = OpenAIModel(
             model_name=settings.MODEL_NAME,
             provider=OpenAIProvider(
@@ -62,27 +62,25 @@ def configure_cli():
         raise SystemExit(1)
 
 
-generalConfig = get_config()
-
 config = {
     "llm": {
         "provider": "openai",
         "config": {
-            "api_key": generalConfig.OPENROUTER_API_KEY.get_secret_value(),
-            "model": generalConfig.MODEL_NAME,
-            "openai_base_url": generalConfig.BASE_URL,
+            "api_key": settings.OPENROUTER_API_KEY.get_secret_value(),
+            "model": settings.MEMO_LLM_MODEL,
+            "openai_base_url": settings.BASE_URL,
         },
     },
     "vector_store": {
         "config": {
-            "embedding_model_dims": 1024,
+            "embedding_model_dims": settings.EMBEDDING_MODEL_DIMS,
         },
     },
     "embedder": {
         "provider": "huggingface",
-        "config": {"model": "Qwen/Qwen3-Embedding-0.6B"},
+        "config": {"model": settings.EMBEDDING_MODEL},
     },
 }
 
-m = Memory.from_config(config)
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-Embedding-0.6B")
+
+tokenizer = AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL)

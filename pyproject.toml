@@ -5,10 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "accelerate>=1.9.0",
     "aiofiles>=24.1.0",
+    "chonkie[add,code]>=1.1.1",
+    "cryptography>=45.0.5",
     "langgraph>=0.5.4",
+    "magika>=0.6.2",
     "mem0ai>=0.1.115",
+    "pathspec>=0.12.1",
     "pydantic>=2.11.7",
     "pydantic-ai>=0.4.7",
+    "ripgrepy>=2.2.0",
     "sentence-transformers>=5.0.0",
 ]
