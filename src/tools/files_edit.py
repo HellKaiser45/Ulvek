@@ -19,12 +19,14 @@ Content = NewType("Content", str)
 
 
 class FileOperation(Enum):
+    """Enumeration of possible file operations."""
     CREATE = "CREATE"
     UPDATE = "UPDATE"
     NOOP = "NOOP"
 
 
 class ValidationError(TypedDict):
+    """Type definition for validation error messages."""
     message: str
     field: str | None
 
@@ -32,12 +34,14 @@ class ValidationError(TypedDict):
 # ------------- Requests ------------------------------------------------------
 @dataclass(slots=True)
 class WriteRequest:
+    """Request to write or overwrite a file with new content."""
     file_path: AbsolutePath
     content: Content
 
 
 @dataclass(slots=True)
 class EditRequest:
+    """Request to edit a file by replacing old content with new content."""
     file_path: AbsolutePath
     old: str
     new: str
@@ -50,6 +54,7 @@ Request = Union[WriteRequest, EditRequest]
 # ------------- Plan ----------------------------------------------------------
 @dataclass(slots=True)
 class Plan:
+    """Execution plan for a file operation containing original and corrected content."""
     original: Content
     corrected: Content
     kind: FileOperation
@@ -58,6 +63,16 @@ class Plan:
 
 # ------------- Validation ----------------------------------------------------
 def validate_path(p: AbsolutePath, workspace_root: Path) -> ValidationError | None:
+    """
+    Validate that a file path is within the workspace root directory.
+    
+    Args:
+        p: The absolute path to validate
+        workspace_root: The root directory of the workspace
+        
+    Returns:
+        ValidationError if path is invalid, None otherwise
+    """
     try:
         resolved = p.resolve()
     except Exception as exc:
@@ -70,6 +85,15 @@ def validate_path(p: AbsolutePath, workspace_root: Path) -> ValidationError | No
 
 
 def validate_content(c: Content) -> ValidationError | None:
+    """
+    Validate that content can be encoded as UTF-8.
+    
+    Args:
+        c: The content to validate
+        
+    Returns:
+        ValidationError if content is invalid, None otherwise
+    """
     try:
         c.encode("utf-8")
     except UnicodeError as exc:
@@ -79,16 +103,30 @@ def validate_content(c: Content) -> ValidationError | None:
 
 # ------------- Content Corrector --------------------------------------------
 class ContentCorrector(Protocol):
+    """Protocol for content correction implementations."""
     async def correct(self, original: Content, proposed: Content) -> Content: ...
 
 
 class IdentityCorrector:
+    """Content corrector that returns proposed content unchanged."""
     async def correct(self, original: Content, proposed: Content) -> Content:
+        """Return the proposed content without any modifications."""
         return proposed
 
 
 # ------------- Diff Renderer -------------------------------------------------
 def render_diff(name: str, old: Content, new: Content) -> List[str]:
+    """
+    Generate a unified diff between old and new content.
+    
+    Args:
+        name: Name of the file being diffed
+        old: Original content
+        new: New content
+        
+    Returns:
+        List of diff lines
+    """
     return list(
         difflib.unified_diff(
             old.splitlines(keepends=True),
@@ -102,6 +140,15 @@ def render_diff(name: str, old: Content, new: Content) -> List[str]:
 
 # ------------- Core Pipeline -------------------------------------------------
 async def _read_or_empty(p: AbsolutePath) -> Content:
+    """
+    Read file content or return empty string if file doesn't exist.
+    
+    Args:
+        p: Path to the file to read
+        
+    Returns:
+        File content as string, or empty string if file doesn't exist
+    """
     try:
         return Content(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -111,6 +158,17 @@ async def _read_or_empty(p: AbsolutePath) -> Content:
 async def _build_write_plan(
     req: WriteRequest, workspace: Path, corrector: ContentCorrector
 ) -> Plan:
+    """
+    Build a plan for writing or overwriting a file.
+    
+    Args:
+        req: The write request
+        workspace: Workspace root directory
+        corrector: Content corrector to apply
+        
+    Returns:
+        Plan containing the operation details
+    """
     original = await _read_or_empty(req.file_path)
     corrected = await corrector.correct(original, req.content)
     kind = FileOperation.UPDATE if original else FileOperation.CREATE
@@ -124,6 +182,21 @@ async def _build_write_plan(
 async def _build_edit_plan(
     req: EditRequest, workspace: Path, corrector: ContentCorrector
 ) -> Plan:
+    """
+    Build a plan for editing a file by replacing content.
+    
+    Args:
+        req: The edit request
+        workspace: Workspace root directory
+        corrector: Content corrector to apply
+        
+    Returns:
+        Plan containing the operation details
+        
+    Raises:
+        ValueError: If file doesn't exist and old string is non-empty, or if
+                   old string is not found the expected number of times
+    """
     original = await _read_or_empty(req.file_path)
 
     # 1.  Decide whether we are creating or editing
@@ -150,6 +223,20 @@ async def _build_edit_plan(
 async def build_plan(
     req: Request, workspace: Path, corrector: ContentCorrector | None = None
 ) -> Plan:
+    """
+    Build an execution plan for a file operation request.
+    
+    Args:
+        req: The file operation request (write or edit)
+        workspace: Workspace root directory
+        corrector: Optional content corrector to apply
+        
+    Returns:
+        Plan containing the operation details
+        
+    Raises:
+        ValueError: If path validation fails or content validation fails
+    """
     print(f"[build_plan] request={type(req).__name__} file={req.file_path}")
     if (err := validate_path(req.file_path, workspace)) is not None:
         raise ValueError(err["message"])
@@ -163,6 +250,15 @@ async def build_plan(
 
 
 async def commit_plan(plan: Plan) -> None:
+    """
+    Commit a plan by writing the corrected content to the file system.
+    
+    Args:
+        plan: The plan to commit
+        
+    Raises:
+        Exception: If file writing fails, the temporary file is cleaned up
+    """
     if plan.kind == FileOperation.NOOP:
         print("[commit_plan] NOOP – nothing to do")
         return
@@ -191,6 +287,17 @@ async def commit_plan(plan: Plan) -> None:
 async def write_file(
     req: WriteRequest, workspace: Path, corrector: ContentCorrector | None = None
 ) -> Plan:
+    """
+    Write or overwrite a file with new content.
+    
+    Args:
+        req: The write request
+        workspace: Workspace root directory
+        corrector: Optional content corrector to apply
+        
+    Returns:
+        Plan containing the operation details
+    """
     print(f"[write_file] file={req.file_path}")
     plan = await build_plan(req, workspace, corrector)
     await commit_plan(plan)
@@ -200,6 +307,17 @@ async def write_file(
 async def edit_file(
     req: EditRequest, workspace: Path, corrector: ContentCorrector | None = None
 ) -> Plan:
+    """
+    Edit a file by replacing old content with new content.
+    
+    Args:
+        req: The edit request
+        workspace: Workspace root directory
+        corrector: Optional content corrector to apply
+        
+    Returns:
+        Plan containing the operation details
+    """
     print(f"[edit_file] file={req.file_path}")
     plan = await build_plan(req, workspace, corrector)
     await commit_plan(plan)
