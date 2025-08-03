@@ -117,6 +117,7 @@ async def _build_write_plan(
     if original == corrected:
         kind = FileOperation.NOOP
     diff_lines = render_diff(req.file_path.name, original, corrected)
+    print(f"[_build_write_plan] kind={kind} file={req.file_path}")
     return Plan(original, corrected, kind, diff_lines)
 
 
@@ -142,12 +143,14 @@ async def _build_edit_plan(
         kind = FileOperation.UPDATE if original != corrected else FileOperation.NOOP
 
     diff_lines = render_diff(req.file_path.name, original, corrected)
+    print(f"[_build_edit_plan] kind={kind} file={req.file_path}")
     return Plan(original, corrected, kind, diff_lines)
 
 
 async def build_plan(
     req: Request, workspace: Path, corrector: ContentCorrector | None = None
 ) -> Plan:
+    print(f"[build_plan] request={type(req).__name__} file={req.file_path}")
     if (err := validate_path(req.file_path, workspace)) is not None:
         raise ValueError(err["message"])
     if isinstance(req, WriteRequest) and (err := validate_content(req.content)):
@@ -161,6 +164,7 @@ async def build_plan(
 
 async def commit_plan(plan: Plan) -> None:
     if plan.kind == FileOperation.NOOP:
+        print("[commit_plan] NOOP – nothing to do")
         return
     p = Path(plan.corrected)  # just to extract parent
     p = Path(p)  # type: ignore
@@ -177,6 +181,7 @@ async def commit_plan(plan: Plan) -> None:
             stat = original_path.stat()
             os.chmod(tmp_path, stat.st_mode)
         tmp_path.replace(p)
+        print(f"[commit_plan] committed {p}")
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -186,6 +191,7 @@ async def commit_plan(plan: Plan) -> None:
 async def write_file(
     req: WriteRequest, workspace: Path, corrector: ContentCorrector | None = None
 ) -> Plan:
+    print(f"[write_file] file={req.file_path}")
     plan = await build_plan(req, workspace, corrector)
     await commit_plan(plan)
     return plan
@@ -194,6 +200,7 @@ async def write_file(
 async def edit_file(
     req: EditRequest, workspace: Path, corrector: ContentCorrector | None = None
 ) -> Plan:
+    print(f"[edit_file] file={req.file_path}")
     plan = await build_plan(req, workspace, corrector)
     await commit_plan(plan)
     return plan
