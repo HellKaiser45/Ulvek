@@ -1,0 +1,134 @@
+prompt,task_type_1,task_type_2,task_type_prob,creativity_scope,reasoning,contextual_knowledge,number_of_few_shots,domain_knowledge,no_label_reason,constraint_ct,prompt_complexity_score
+what is the best library for a cli frontend in python,Open QA,NA,0.915,0.0043,0.0067,0.0465,0,0.9577,0.0,0.0257,0.15301
+what is the distance between 2 atoms,Open QA,NA,0.989,0.0063,0.0143,0.0637,0,0.5755,0.0,0.0101,0.09681
+what is the country with the cheapest luxury access safest,Open QA,NA,0.993,0.0028,0.0396,0.3076,0,0.4661,0.0,0.0119,0.09796
+"How do I print 'Hello, World!' in Python?",Open QA,NA,0.986,0.0069,0.0074,0.0082,0,0.8803,0.0,0.049,0.14407
+What does git clone do?,Open QA,NA,0.989,0.0034,0.0048,0.1333,0,0.6385,0.0,0.0071,0.10589
+How do I check my Python version?,Open QA,NA,0.984,0.0034,0.0069,0.2392,0,0.916,0.0,0.0118,0.15404
+What is a for loop?,Open QA,NA,0.987,0.0037,0.0118,0.129,0,0.6848,0.0,0.0097,0.11487
+How do I install a package using pip?,Open QA,NA,0.98,0.004,0.0048,0.085,0,0.951,0.0,0.0132,0.15148
+I get 'SyntaxError: invalid syntax' in Python. What does this mean?,Open QA,NA,0.972,0.0012,0.0615,0.3448,0,0.9214,0.0,0.0107,0.17285
+My React app says 'undefined is not a function.' How do I fix it?,Open QA,NA,0.968,0.0051,0.0297,0.086,0,0.9812,0.0,0.0459,0.16757
+Why am I getting a 404 error on my API request?,Open QA,NA,0.97,0.0034,0.028,0.6478,0,0.9008,0.0,0.0085,0.17697
+How do I resolve 'Merge conflict' in Git?,Open QA,NA,0.98,0.0056,0.0056,0.0186,0,0.931,0.0,0.0118,0.14571
+My Docker container keeps exiting. What should I check?,Open QA,NA,0.944,0.0036,0.0545,0.8077,0,0.8879,0.0,0.0058,0.18932
+"Explain object-oriented programming (OOP) in simple terms.""",Open QA,NA,0.822,0.0089,0.1232,0.0209,0,0.9164,0.0,0.1403,0.19346
+What’s the difference between HTTP and HTTPS?,Open QA,NA,0.995,0.0018,0.0095,0.0355,0,0.6884,0.0,0.0136,0.11008
+How does a blockchain work?,Open QA,NA,0.986,0.0075,0.0221,0.0289,0,0.7621,0.0,0.023,0.12736
+What is the difference between SQL and NoSQL databases?,Open QA,NA,0.992,0.0017,0.0081,0.0369,0,0.8165,0.0,0.0191,0.12981
+Explain Big O notation with an example.,Open QA,Brainstorming,0.624,0.113,0.2374,0.092,0,0.836,0.0,0.6118,0.32067
+Write a Python function to reverse a linked list.,Code Generation,NA,0.949,0.0281,0.0198,0.102,0,0.9938,0.0,0.1345,0.18913
+How would you design a URL-shortening service like Bit.ly?,Open QA,NA,0.954,0.0238,0.0197,0.0374,0.0758,0.961,0.0,0.1018,0.17833
+Explain how you’d optimize a slow SQL query.,Open QA,NA,0.806,0.0474,0.1633,0.0389,0,0.9542,0.0,0.0954,0.2168
+Write a recursive function to calculate Fibonacci numbers.,Code Generation,NA,0.843,0.025,0.026,0.1254,0,0.9844,0.0,0.1773,0.19578
+How do you implement JWT authentication in a Node.js API?,Open QA,NA,0.872,0.0092,0.0146,0.0462,0,0.9903,0.0,0.1099,0.17421
+How do I create a new React component?,Open QA,NA,0.975,0.008,0.0071,0.0475,0,0.9591,0.0,0.0183,0.15356
+What’s the difference between TensorFlow and PyTorch?,Open QA,NA,0.993,0.0029,0.0135,0.0443,0,0.8732,0.0,0.0227,0.14099
+How do I deploy a Flask app on AWS?,Open QA,NA,0.98,0.006,0.006,0.0192,0,0.9071,0.0,0.0197,0.14358
+Explain how Redux works in React.,Open QA,NA,0.928,0.0067,0.0545,0.0423,0,0.8902,0.0,0.0763,0.16306
+How do I use useEffect in React?,Open QA,NA,0.979,0.0048,0.0088,0.0163,0,0.9237,0.0,0.0221,0.14657
+What are some best practices for writing clean code?,Open QA,NA,0.863,0.0096,0.0072,0.0994,0,0.7383,0.0,0.0465,0.12785
+How can I make my website load faster?,Open QA,NA,0.989,0.0083,0.0049,0.1866,0,0.7022,0.0,0.0089,0.12013
+What’s the best way to handle secrets in a GitHub repository?,Open QA,NA,0.991,0.0053,0.0049,0.03,0,0.7127,0.0,0.0155,0.11381
+How do I prevent SQL injection in my backend?,Open QA,NA,0.982,0.0065,0.0117,0.0657,0,0.9408,0.0,0.0371,0.15517
+"What are microservices, and when should I use them?",Open QA,NA,0.977,0.0103,0.0368,0.047,0,0.773,0.0,0.2736,0.17214
+How would you design Twitter’s backend?,Open QA,NA,0.959,0.0486,0.0564,0.0597,0,0.8706,0.0,0.0767,0.17619
+What’s the best database for a real-time chat app?,Open QA,NA,0.987,0.0107,0.0065,0.0225,0,0.4126,0.0,0.0215,0.07161
+How do you handle millions of requests per second?,Open QA,NA,0.988,0.0144,0.1076,0.155,0,0.7634,0.0,0.0598,0.16317
+Explain how caching works in distributed systems.,Open QA,NA,0.949,0.0132,0.0614,0.0405,0,0.8847,0.0,0.062,0.164
+How would you build a recommendation system like Netflix’s?,Open QA,NA,0.988,0.0571,0.0693,0.0475,0,0.7491,0.0,0.0877,0.1652
+What’s the difference between supervised and unsupervised learning?,Open QA,NA,0.994,0.0017,0.0307,0.0827,0,0.8507,0.0,0.0199,0.14299
+How do I train a simple neural network in PyTorch?,Open QA,NA,0.945,0.0058,0.0162,0.013,0,0.9799,0.0,0.0563,0.16216
+Explain gradient descent like I’m five.,Open QA,NA,0.887,0.0124,0.0582,0.0609,0,0.6591,0.0,0.0249,0.12453
+"What is overfitting, and how do you prevent it?",Open QA,NA,0.994,0.0038,0.017,0.0932,0,0.6279,0.0,0.09,0.11793
+How does a transformer model work in NLP?,Open QA,NA,0.978,0.0046,0.0363,0.0216,0,0.914,0.0,0.0488,0.15618
+How do I deploy a containerized app on Kubernetes?,Open QA,NA,0.976,0.008,0.0097,0.0197,0,0.9614,0.0,0.0216,0.15366
+What’s the difference between AWS Lambda and EC2?,Open QA,NA,0.993,0.0018,0.0067,0.0325,0,0.8143,0.0,0.0129,0.12801
+Explain CI/CD in simple terms.,Open QA,NA,0.883,0.017,0.1911,0.0361,0,0.8729,0.0,0.2815,0.22869
+How do I monitor server performance?,Open QA,NA,0.991,0.003,0.0059,0.1842,0,0.7234,0.0,0.0072,0.12133
+What is Infrastructure as Code (IaC)?,Open QA,NA,0.978,0.0034,0.0126,0.0137,0.0708,0.9318,0.0,0.0304,0.15289
+Why does 0.1 + 0.2 !== 0.3 in JavaScript?,Open QA,NA,0.986,0.0016,0.046,0.052,0.0882,0.8824,0.0,0.0344,0.15659
+What’s the difference between == and === in JavaScript?,Open QA,NA,0.988,0.0012,0.0089,0.0195,0,0.8998,0.0,0.0454,0.1454
+Explain the this keyword in JavaScript.,Open QA,NA,0.947,0.0034,0.016,0.076,0,0.9325,0.0,0.0391,0.15473
+How does event bubbling work in the DOM?,Open QA,NA,0.985,0.0044,0.0188,0.0214,0,0.878,0.0,0.0228,0.14243
+"What is a race condition, and how do you prevent it?",Open QA,NA,0.987,0.0032,0.0218,0.0217,0,0.7607,0.0,0.1685,0.14703
+Will AI replace software engineers?,Open QA,NA,0.978,0.0113,0.026,0.0568,0,0.5866,0.0,0.0139,0.10337
+What’s the future of quantum computing?,Open QA,NA,0.991,0.0064,0.0248,0.1445,0,0.7444,0.0,0.0109,0.12896
+Is Rust better than C++ for systems programming?,Open QA,NA,0.985,0.0068,0.0205,0.0183,0,0.9044,0.0,0.034,0.14918
+Should I learn Python or JavaScript first?,Open QA,NA,0.978,0.0111,0.0114,0.0504,0,0.5773,0.0,0.01,0.09735
+What’s the next big thing in tech?,Open QA,NA,0.99,0.0112,0.0071,0.2439,0,0.4197,0.0,0.0055,0.08167
+How do I compile a Python script into a Java executable?,Open QA,NA,0.971,0.0071,0.0093,0.0151,0,0.9716,0.0,0.0249,0.15504
+Can I use machine learning to predict lottery numbers?,Open QA,NA,0.976,0.0096,0.0258,0.0093,0,0.7662,0.0,0.0348,0.13042
+Write a function that solves the halting problem.,Code Generation,Text Generation,0.715,0.0713,0.0736,0.1047,0,0.9819,0.0,0.3065,0.24185
+How do I make an infinite loop that doesn’t freeze my computer?,Open QA,NA,0.99,0.0074,0.0331,0.0358,0,0.9043,0.0,0.1095,0.16473
+How do I bit-bang I2C on an AVR microcontroller without a hardware peripheral?,Open QA,NA,0.973,0.0044,0.0098,0.0142,0,0.9842,0.0,0.0508,0.15995
+How do I bit-bang I2C on an AVR microcontroller without a hardware peripheral?,Open QA,NA,0.973,0.0044,0.0098,0.0142,0,0.9842,0.0,0.0508,0.15995
+How would you optimize ARM Cortex-M4 assembly for a tight DSP loop?,Open QA,NA,0.96,0.0072,0.0435,0.0263,0,0.9865,0.0,0.0914,0.17639
+xplain the difference between volatile and __attribute__((section)) in embedded C.,Open QA,Code Generation,0.553,0.0081,0.0143,0.0345,0,0.9904,0.0,0.0928,0.17061
+Write a factorial function in Erlang using tail recursion.,Code Generation,NA,0.916,0.0152,0.0251,0.0803,0,0.9937,0.0,0.1577,0.18832
+How do I implement metaprogramming in Nim using macros?,Open QA,NA,0.958,0.0071,0.0134,0.0199,0,0.9836,0.0,0.0452,0.16115
+What’s the equivalent of Python’s itertools.permutations in Raku?,Open QA,NA,0.98,0.0021,0.0168,0.0333,0,0.9753,0.0,0.0802,0.16492
+How do I parse a COBOL-85 data file in modern Python?,Open QA,NA,0.896,0.0079,0.0177,0.0131,0.0586,0.988,0.0,0.0699,0.16946
+What’s the correct way to handle COM objects in VB6 in 2024?,Open QA,NA,0.987,0.0017,0.0075,0.0284,0,0.9334,0.0,0.0331,0.14886
+Explain the difference between Turbo Pascal and Delphi’s memory model.,Open QA,NA,0.97,0.0035,0.0451,0.0234,0,0.8899,0.0,0.047,0.15421
+How do I implement homomorphic encryption for a privacy-preserving SQL query?,Open QA,NA,0.947,0.0093,0.0222,0.0159,0,0.9821,0.0,0.08,0.16891
+What’s the current best approach for fine-tuning a LoRA adapter on Llama 3?,Open QA,NA,0.938,0.004,0.0032,0.1694,0,0.9112,0.0,0.0282,0.15158
+Explain how Cap’n Proto’s zero-copy serialization works under the hood.,Open QA,NA,0.961,0.0145,0.2153,0.1183,0,0.895,0.0,0.1949,0.2283
+"My Rust code fails with error[E0382]: borrow of moved value.""Follow-up: ""Here’s the snippet:rustlet s = String::from(""hello"");  let t = s;  println!(""{}"", s);  How do I fix it?""",Open QA,Closed QA,0.736,0.0015,0.0259,0.1982,0,0.982,0.0,0.0069,0.16525
+"My React component re-renders infinitely when using useEffect.""Follow-up: ""Here’s my hook:jsxuseEffect(() => {    setState(fetchData());  }, []);  What’s wrong?""",Open QA,Closed QA,0.783,0.0027,0.0599,0.332,0,0.968,0.0,0.0065,0.17869
+"Given a 10TB dataset on S3, how would you build a cost-effective pipeline to process it with Spark, assuming spot instances can fail?",Open QA,NA,0.906,0.0531,0.141,0.091,0,0.9846,0.0,0.6219,0.29936
+How would you design a WebRTC-based video chat app that works behind symmetric NAT?,Open QA,NA,0.978,0.0144,0.0559,0.0359,0,0.9684,0.0,0.1654,0.19088
+I need to scrape a JavaScript-rendered webpage.,Open QA,Other,0.523,0.0097,0.0068,0.7058,0,0.9058,0.0,0.0133,0.17825
+Use Playwright or Puppeteer.,Text Generation,Open QA,0.422,0.1179,0.0118,0.506,0,0.4712,0.0,0.2092,0.17157
+How do I make it run headless in a Docker container on AWS Lambda?,Open QA,NA,0.955,0.005,0.008,0.0508,0,0.9817,0.0,0.0445,0.16022
+"I want to train a CNN on medical images but only have 1,000 labeled samples.",Open QA,Code Generation,0.418,0.0166,0.0182,0.1772,0,0.9909,0.0,0.0969,0.18239
+Use transfer learning with a pre-trained ResNet.,Open QA,Code Generation,0.572,0.0103,0.0044,0.1258,0,0.987,0.0,0.0389,0.16488
+How do I handle class imbalance if 90% of the images are 'normal,Open QA,NA,0.975,0.0073,0.2606,0.4169,0,0.8185,0.0,0.07,0.22182
+"Why does x++ compile in C but not in Rust?""",Open QA,NA,0.984,0.0027,0.0265,0.0528,0,0.9485,0.0,0.0159,0.15487
+What’s the significance of the monad trait in Scala compared to Haskell,Open QA,NA,0.98,0.0028,0.0575,0.0437,0,0.9364,0.0,0.2305,0.19257
+How does the JVM’s G1 garbage collector prioritize regions?,Open QA,NA,0.991,0.0051,0.0162,0.0312,0,0.8373,0.0,0.0122,0.13482
+xplain the difference between epoll_wait and select in Linux syscalls.,Open QA,NA,0.842,0.0086,0.0225,0.0205,0,0.859,0.0,0.1101,0.15502
+"Explain how a GPU shader works to a 10-year-old, then explain it again to a graphics PhD",Open QA,NA,0.786,0.148,0.388,0.0237,0.0672,0.9215,0.0,0.2514,0.32928
+"Describe SQL joins to a beginner, then compare hash joins vs. nested loops for a DBA.",Open QA,Text Generation,0.506,0.1327,0.3651,0.0448,0,0.9513,0.0,0.7745,0.39883
+python# User provides this buggy code:  def find_dupes(lst):      return [x for x in lst if lst.count(x) > 0]  # O(n²) inefficiency  # Agent should:  # 1. Point out the bug (always returns the original list).  # 2. Fix it to find actual dupes.  # 3. Optimize to O(n) using a set.,Code Generation,NA,0.653,0.0097,0.0496,0.0406,0.1538,0.9927,0.0,0.1332,0.1944
+Why does [] == ![] evaluate to true in JavaScript?,Open QA,NA,0.985,0.0016,0.0315,0.1146,0,0.9662,0.0,0.0332,0.16407
+"n Python, why does (256 + 1) is (257) return False but (256) is (256) returns True?",Open QA,Closed QA,0.864,0.0052,0.3775,0.0346,0,0.7225,0.0,0.2583,0.24505
+Should I use gRPC or REST for a high-frequency trading system? Latency is critical.,Open QA,Code Generation,0.81,0.0195,0.0244,0.0289,0,0.9942,0.0,0.1519,0.18628
+"or a geo-distributed app, would you pick CockroachDB or DynamoDB? Why?",Open QA,NA,0.952,0.054,0.4608,0.2162,0.0641,0.8672,0.0,0.5884,0.36645
+What’s the weather today?,Open QA,NA,0.974,0.0109,0.0129,0.5878,0,0.2754,0.0,0.0043,0.07838
+Tell me a joke.,Text Generation,Open QA,0.635,0.8643,0.0522,0.2502,0,0.2506,0.0,0.0863,0.3786
+"What time is it?""",Open QA,NA,0.945,0.0125,0.0279,0.797,0,0.1969,0.0,0.0051,0.0815
+Who won the World Cup in 2022?,Open QA,NA,0.985,0.004,0.0147,0.098,0,0.3916,0.0,0.0091,0.07008
+How do you boil an egg?,Open QA,NA,0.983,0.0113,0.0099,0.0391,0,0.3402,0.0,0.0092,0.06079
+Will I need an umbrella tomorrow?,Open QA,NA,0.929,0.013,0.0094,0.7641,0,0.2558,0.0,0.0144,0.08564
+"Tell me another one, but make it about cats.",Text Generation,NA,0.794,0.8419,0.0152,0.1261,0,0.2411,0.0,0.6769,0.44247
+Who was the top scorer in that tournament?,Open QA,NA,0.99,0.0059,0.0268,0.7021,0,0.3649,0.0,0.0113,0.1003
+How long should I cook pasta?,Open QA,NA,0.991,0.0061,0.0051,0.2204,0,0.3741,0.0,0.006,0.07145
+"Explain quantum computing like I’m five, then give me a more technical explanation.",Open QA,NA,0.755,0.0996,0.2726,0.055,0,0.7781,0.0,0.5334,0.30248
+Compare the pros and cons of electric cars vs. gasoline cars.,Open QA,Brainstorming,0.818,0.0136,0.0365,0.0536,0,0.5734,0.0,0.0677,0.11273
+"Plan a 3-day trip to Paris, including flights, hotels, and attractions.",Text Generation,Brainstorming,0.423,0.3405,0.0025,0.0581,0,0.3348,0.0,0.2385,0.2087
+Summarize the key events of World War II in 5 bullet points.,Text Generation,Brainstorming,0.499,0.1336,0.0422,0.1411,0,0.6567,0.0,0.6267,0.25687
+Tell me about it.,Open QA,NA,0.87,0.1497,0.0356,0.8905,0,0.2102,0.0,0.0696,0.14779
+What do you think?,Open QA,NA,0.827,0.0486,0.0499,0.8629,0,0.119,0.0,0.0267,0.09448
+What is the meaning of life?,Open QA,NA,0.986,0.0157,0.0274,0.077,0,0.3902,0.0,0.0112,0.07641
+"If a tree falls in a forest and no one hears it, does it make a sound?",Open QA,NA,0.957,0.0742,0.3283,0.0277,0,0.3239,0.0,0.1225,0.17639
+Can you prove that you’re not a robot?,Open QA,NA,0.828,0.3149,0.0928,0.3621,0,0.2145,0.0,0.0358,0.18907
+What happens if you divide by zero?,Open QA,NA,0.986,0.0062,0.0657,0.1377,0,0.694,0.0,0.0099,0.13106
+"I’m trying to understand how blockchain works. Can you explain it in simple terms, then discuss its applications in finance, and finally compare it to traditional banking systems?""",Open QA,NA,0.9,0.1358,0.2343,0.1236,0,0.7714,0.0,0.9356,0.36834
+"Write me a 300-word essay on the impact of social media on mental health, covering both positive and negative effects, with examples.",Text Generation,NA,0.935,0.6885,0.0199,0.0305,0,0.6635,0.0,0.8104,0.46856
+How do I deal with stress?,Open QA,NA,0.993,0.0048,0.012,0.1211,0,0.5284,0.0,0.013,0.09194
+What’s your favorite movie and why?,Open QA,NA,0.967,0.1188,0.0381,0.1196,0,0.3321,0.0,0.1811,0.13407
+Do you think AI will replace human jobs?,Open QA,NA,0.983,0.0118,0.0615,0.1702,0,0.5225,0.0,0.0446,0.11308
+I’m feeling sad today. Can you cheer me up?,Open QA,NA,0.939,0.1566,0.0983,0.4916,0.1208,0.1732,0.0,0.0464,0.14294
+Set a timer for 5 minutes.,Text Generation,Open QA,0.369,0.0653,0.0133,0.2801,0,0.1785,0.0,0.1113,0.08365
+Remind me to call John at 3 PM.,Open QA,Text Generation,0.352,0.1584,0.0156,0.553,0,0.092,0.0,0.0553,0.10909
+"Translate 'Hello, how are you?' to Spanish.",Text Generation,NA,0.837,0.1652,0.0018,0.1788,0,0.5112,0.0,0.0957,0.15824
+Calculate 15% of 200.,Open QA,NA,0.642,0.004,0.0082,0.3367,0,0.4689,0.0,0.028,0.09482
+What does the color blue taste like?,Open QA,NA,0.991,0.008,0.0091,0.2665,0,0.3024,0.0,0.0076,0.0649
+How many dreams fit in a suitcase?,Open QA,NA,0.956,0.0296,0.018,0.5286,0,0.2066,0.0,0.0209,0.07541
+Can you teach me to fly?,Open QA,NA,0.972,0.0671,0.0089,0.3527,0,0.3478,0.0,0.0117,0.09727
+Tell me what I’m thinking right now.,Open QA,NA,0.935,0.1432,0.038,0.764,0,0.1076,0.0,0.0454,0.12077
+Tell me what I’m thinking right now.,Open QA,NA,0.935,0.1432,0.038,0.764,0,0.1076,0.0,0.0454,0.12077
+Explain the Pythagorean theorem with an example.,Open QA,Text Generation,0.597,0.255,0.119,0.0625,0,0.7644,0.0,0.5578,0.32045
+"My order hasn’t arrived. What should I do?""",Open QA,NA,0.967,0.0192,0.0213,0.6428,0,0.2959,0.0,0.0098,0.09004
+Find me the cheapest flight to Tokyo next month.,Open QA,Brainstorming,0.535,0.051,0.003,0.0974,0,0.3509,0.0,0.0095,0.07753

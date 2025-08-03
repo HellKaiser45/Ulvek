@@ -1,7 +1,7 @@
 from ripgrepy import Ripgrepy
 from pathlib import Path
 from pydantic import BaseModel, field_validator, Field, TypeAdapter
-from typing import Any
+from typing import Any, Optional, Tuple
 from src.tools.codebase import process_file, FileAnalysis
 from src.tools.chunkers import (
     format_chunks_for_memory,
@@ -56,31 +56,97 @@ class SearchContent(SearchResult):
     content_extract: str
 
 
-async def search_files(
-    ripgrep_query: str, file_or_files: str | list[str]
-) -> list[SearchContent]:
-    """
-    Search the current working directory for `ripgrep_query` in the given file(s).
+class RipgrepSearchRequest(BaseModel):
+    query: str = Field(
+        ...,
+        description="Search term.  Can be a plain string or a regular expression "
+        "unless `literal=True` is set.",
+    )
 
-    Parameters
-    ----------
-    ripgrep_query : str
-        Plain-text or regex pattern passed to ripgrep.
-    file_or_files : str | list[str]
-        Single file or list of files to search.  Paths may be absolute or relative
-        to the current working directory.  Glob patterns are supported.
+    paths: list[str] = Field(
+        ...,
+        description="File(s) or directory/ies to restrict the search to, "
+        "relative to the current working directory.",
+    )
+
+    literal: bool = Field(
+        False,
+        description="If True, treat `query` as a literal string instead of a regex.",
+    )
+
+    case_insensitive: bool = Field(
+        False,
+        description="Perform case-insensitive matching (-i flag).",
+    )
+
+    context: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Number of lines of context to show both before "
+        "and after each match (-C flag).",
+    )
+
+    max_count: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Stop after finding this many matching lines in total.",
+    )
+
+
+class Search_file_request(BaseModel):
+    ask_docs: str = Field(
+        ...,
+        description="The prompt to ask the LLM to search for topics/functions/classes/etc in the codebase.",
+    )
+    ripgrep_request: RipgrepSearchRequest = Field(
+        ...,
+        description="The request to pass to ripgrep.",
+    )
+
+
+async def search_files(searchquery: Search_file_request) -> list[SearchContent]:
+    """
+    End-to-end “smart search” over the current workspace.
+
+    What the function does
+    ----------------------
+    1. Runs **ripgrep** with the options supplied in
+       `searchquery.ripgrep_request`, returning every matching line.
+    2. De-duplicates the files that contain at least one hit and
+       asynchronously analyses them (`process_file`) to obtain
+       language, file type, etc.
+    3. Reads the full content of each file and chunks it:
+       - code → language-aware chunks
+       - plain text → simple text chunks
+    4. Sends the chunks to an LLM together with the prompt
+       `searchquery.ask_docs`, performing a **RAG retrieval** that
+       returns the most relevant snippets.
+    5. Extracts the **enclosing syntactic block** (class / function /
+       markdown section, etc.) that contains the hit line.
+    6. Returns a list of `SearchContent` objects, one per **match**,
+       that combine:
+
+       - the original ripgrep hit (file path, line number, line text)
+       - file-level metadata (language, file type, …)
+       - the RAG-selected snippets (`content_rag_result`)
+       - the enclosing block (`content_extract`)
+
 
     Returns
     -------
     list[SearchContent]
-        One item per match, containing:
-        - file metadata (path, type, size, last modified, etc.)
-        - line_number and line_content of the match
-        - content_extract: ±50 lines around the hit, trimmed to blank lines
-        - content_rag_result: list[str] of relevant chunks from the file,
-          produced by the memory/RAG pipeline
+        One entry per **matching line** returned by ripgrep, enriched
+        with RAG results and enclosing context.
+
+    Notes / tips
+    ------------
+    - The function is **async**; call it with `await`.
+    - If you only care about **files** and not every single line,
+      post-process the list to group by `file_path`.
+    - To search the entire repo simply set `paths=["."]`.
+
     """
-    matches = _get_ripgrep_matches(ripgrep_query, file_or_files)
+    matches = _get_ripgrep_matches(searchquery.ripgrep_request)
     results_paths = {match.data.path.text for match in matches}
     files_analysis = await process_file(list(results_paths))
 
@@ -106,7 +172,9 @@ async def search_files(
             chunks = format_chunks_for_memory(chunk_text_on_demand(text))
 
         # Process memory (RAG results)
-        memory = process_multiple_messages_with_temp_memory(chunks, ripgrep_query)
+        memory = process_multiple_messages_with_temp_memory(
+            chunks, searchquery.ask_docs
+        )
 
         # Extract surrounding content
         content = enclosing_block(file.file_path, file.line_number)
@@ -123,26 +191,32 @@ async def search_files(
     return search_results
 
 
-def _get_ripgrep_matches(query: str, paths: list[str] | str) -> list[SearchMatch]:
+def _get_ripgrep_matches(req: RipgrepSearchRequest):
     root = Path.cwd().resolve()
-    print("the dir is ", root)
-    rg = Ripgrepy(query, str(root)).line_number().fixed_strings().json()
-    if isinstance(paths, str):
-        paths = [paths]
-    for f in paths:
-        abs_path = Path(f).expanduser().resolve()
+    rg = Ripgrepy(req.query, str(root)).line_number().json()
+
+    if req.literal:
+        rg = rg.fixed_strings()
+    if req.case_insensitive:
+        rg = rg.ignore_case()
+    if req.context:
+        rg = rg.context(req.context)
+    if req.max_count:
+        rg = rg.max_count(req.max_count)
+
+    # Apply path globs
+    for p in req.paths:
+        abs_path = Path(p).expanduser().resolve()
         rel = abs_path.relative_to(root)
         rg = rg.glob(str(rel))
 
     rg = rg.glob("!main.py")
 
     out = rg.run().as_dict
-
-    if len(out) == 0:
+    if not out:
         return []
 
     adapter = TypeAdapter(list[SearchMatch])
-
     return adapter.validate_python(out)
 
 
@@ -152,10 +226,6 @@ def enclosing_block(
     max_lines: int = 100,
     max_chars: int = 5000,
 ) -> str:
-    """
-    Return ±max_lines around the hit line, trimmed to the nearest blank line.
-    Handles indented blocks in any language reasonably well.
-    """
     path = Path(file_path)
     lines = path.read_text().splitlines(keepends=True)
 

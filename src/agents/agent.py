@@ -1,12 +1,11 @@
 from pydantic_ai import Agent
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModel
-
-from src.tools.search_docs import AsyncContext7Client
 from ..config import settings
 from pydantic import BaseModel, Field
 from pydantic_ai import Tool
-from src.tools.codebase import process_file
+from src.tools.interactive_tools import gather_docs_context, prompt_user
+from src.tools.search_files import search_files
 
 
 model = OpenAIModel(
@@ -110,16 +109,18 @@ enhancer_agent = Agent(
     name="orchestrator_agent",
 )
 
-gatherer_agent = Agent(
+context_retriever_agent = Agent(
     model,
     system_prompt=(
-        "you are a prompt-refinement assistant. "
-        "strip ambiguity and extract the core task."
+        azure_safety_template,
+        "you want to make sure you understand and have sufficient knowledge "
+        "keep gathering context until you estimate it is not necessary anymore. "
+        "Do NOT add any commentary—just keep calling tools.",
     ),
-    output_type=EnhancedPrompt,  # type: ignore
-    name="orchestrator_agent",
+    name="context gatherer agent",
     tools=[
-        Tool(AsyncContext7Client.search_and_fetch),
-        Tool(process_file),
+        Tool(prompt_user),
+        Tool(search_files),
+        Tool(gather_docs_context),
     ],
 )

@@ -31,10 +31,6 @@ class SearchConfig(BaseModel):
         le=1.0,
         description="Relevance threshold for Mem0 search; higher values return fewer but more relevant snippets.",
     )
-    delimiters: tuple[str, ...] = Field(
-        ("----------------------------------------",),
-        description="Strings that delimit logical sections when chunking the documentation text.",
-    )
 
 
 async def gather_docs_context(params: SearchConfig) -> list[str]:

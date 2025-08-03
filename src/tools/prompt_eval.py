@@ -213,48 +213,4 @@ class PromptComplexityPredictor:
             return self.model(encoded)
 
 
-def is_complex(
-    predictor,
-    prompt: str | list[str],
-    complexity_threshold: float = 0.35,
-    reasoning_threshold: float = 0.5,
-    creativity_threshold: float = 0.7,
-) -> bool | list[bool]:
-    results = predictor(prompt)
-    scores = results["prompt_complexity_score"]
-    reason = results["reasoning"]
-    creativ = results["creativity_scope"]
-
-    def _one(i: int) -> bool:
-        return (
-            scores[i] >= complexity_threshold
-            or reason[i] >= reasoning_threshold
-            or creativ[i] >= creativity_threshold
-        )
-
-    return _one(0) if isinstance(prompt, str) else [_one(i) for i in range(len(prompt))]
-
-
-def needs_context(
-    predictor,
-    prompt: str | list[str],
-    contextual_threshold: float = 0.6,
-    domain_threshold: float = 0.65,
-    open_qa_boost: bool = True,
-) -> bool | list[bool]:
-    results = predictor(prompt)
-    ctx = results["contextual_knowledge"]
-    dom = results["domain_knowledge"]
-    t1 = results["task_type_1"]
-
-    def _one(i: int) -> bool:
-        return (
-            ctx[i] >= contextual_threshold
-            or dom[i] >= domain_threshold
-            or (open_qa_boost and t1[i] == "Open QA")
-        )
-
-    return _one(0) if isinstance(prompt, str) else [_one(i) for i in range(len(prompt))]
-
-
 predictor = PromptComplexityPredictor()
