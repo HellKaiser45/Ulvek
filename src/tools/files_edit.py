@@ -204,7 +204,34 @@ async def edit_file(
 
 
 async def fs_write(file_path: str, content: str) -> list[str]:
-    """Propose creating/overwriting a file relative to CWD."""
+    """
+    Create or completely overwrite a file in the current working directory.
+
+    Use this function when you need to:
+    • create a brand-new file
+    • replace the entire contents of an existing file
+
+    Parameters
+    ----------
+    file_path : str
+        Relative or absolute path to the file.  If relative, it is resolved
+        against the current working directory.  Parent directories are created
+        automatically if they do not exist.
+    content : str
+        The full text to write into the file.  Must be valid UTF-8.
+
+    Returns
+    -------
+    list[str]
+        A unified-diff of the change that would be applied (empty list if the
+        file already contains exactly the proposed content).
+
+    Raises
+    ------
+    ValueError
+        If the resolved path lies outside the current workspace or the content
+        cannot be encoded as UTF-8.
+    """
     req = WriteRequest(
         file_path=AbsolutePath(Path(file_path).resolve()),
         content=Content(content),
@@ -219,7 +246,45 @@ async def fs_edit(
     new_string: str,
     expected_replacements: int = 1,
 ) -> list[str]:
-    """Propose editing a file relative to CWD."""
+    """
+    Perform a precise, line-aware edit on an existing file.
+
+    Use this function when you need to:
+    • change a specific substring or block of code
+    • insert new text at a known location (set `old_string` to the marker
+      you want to replace)
+    • delete a block (set `new_string` to an empty string)
+
+    The function performs a literal string replacement and validates that the
+    expected number of matches is found before applying the change.
+
+    Parameters
+    ----------
+    file_path : str
+        Relative or absolute path to the file.  If relative, it is resolved
+        against the current working directory.
+    old_string : str
+        Exact substring to locate in the current file content.  Leading/trailing
+        whitespace and newlines are significant.
+    new_string : str
+        Replacement text to insert in place of `old_string`.
+    expected_replacements : int, default 1
+        Number of times `old_string` must appear for the edit to succeed.
+        Set to 0 to allow creation of a new file (in which case `old_string`
+        must be empty).
+
+    Returns
+    -------
+    list[str]
+        A unified-diff of the change that would be applied.
+
+    Raises
+    ------
+    ValueError
+        • If the resolved path lies outside the current workspace.
+        • If `old_string` is not found the expected number of times.
+        • If the file does not exist and `old_string` is non-empty.
+    """
     req = EditRequest(
         file_path=AbsolutePath(Path(file_path).resolve()),
         old=old_string,
