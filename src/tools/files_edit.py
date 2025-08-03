@@ -231,6 +231,7 @@ async def fs_write(file_path: str, content: str) -> list[str]:
         If the resolved path lies outside the current workspace or the content
         cannot be encoded as UTF-8.
     """
+    print(f"[fs_write] file_path={file_path}")
     req = WriteRequest(
         file_path=AbsolutePath(Path(file_path).resolve()),
         content=Content(content),
@@ -284,6 +285,11 @@ async def fs_edit(
         • If `old_string` is not found the expected number of times.
         • If the file does not exist and `old_string` is non-empty.
     """
+    print(
+        f"[fs_edit] file_path={file_path} "
+        f"old_string={repr(old_string)} new_string={repr(new_string)} "
+        f"expected_replacements={expected_replacements}"
+    )
     req = EditRequest(
         file_path=AbsolutePath(Path(file_path).resolve()),
         old=old_string,
