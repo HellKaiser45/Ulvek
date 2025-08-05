@@ -9,7 +9,7 @@ class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        cli_parse_args=True,
+        cli_parse_args=False,
         cli_prog_name="Ulvek",
         cli_kebab_case=True,
         cli_implicit_flags=True,

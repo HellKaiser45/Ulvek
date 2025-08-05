@@ -2503,11 +2503,12 @@ wheels = [
 [[package]]
 name = "ulvek"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
     { name = "aiofiles" },
     { name = "chonkie", extra = ["code"] },
+    { name = "click" },
     { name = "cryptography" },
     { name = "langgraph" },
     { name = "magika" },
@@ -2515,6 +2516,7 @@ dependencies = [
     { name = "pathspec" },
     { name = "pydantic" },
     { name = "pydantic-ai" },
+    { name = "rich" },
     { name = "ripgrepy" },
     { name = "sentence-transformers" },
 ]
@@ -2524,6 +2526,7 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.9.0" },
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "chonkie", extras = ["add", "code"], specifier = ">=1.1.1" },
+    { name = "click", specifier = ">=8.2.1" },
     { name = "cryptography", specifier = ">=45.0.5" },
     { name = "langgraph", specifier = ">=0.5.4" },
     { name = "magika", specifier = ">=0.6.2" },
@@ -2531,6 +2534,7 @@ requires-dist = [
     { name = "pathspec", specifier = ">=0.12.1" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-ai", specifier = ">=0.4.7" },
+    { name = "rich", specifier = ">=14.1.0" },
     { name = "ripgrepy", specifier = ">=2.2.0" },
     { name = "sentence-transformers", specifier = ">=5.0.0" },
 ]

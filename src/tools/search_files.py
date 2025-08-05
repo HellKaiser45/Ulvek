@@ -138,12 +138,6 @@ async def search_files(searchquery: Search_file_request) -> list[SearchContent]:
         One entry per **matching line** returned by ripgrep, enriched
         with RAG results and enclosing context.
 
-    Notes / tips
-    ------------
-    - The function is **async**; call it with `await`.
-    - If you only care about **files** and not every single line,
-      post-process the list to group by `file_path`.
-    - To search the entire repo simply set `paths=["."]`.
 
     """
     matches = _get_ripgrep_matches(searchquery.ripgrep_request)

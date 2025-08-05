@@ -1,132 +1,103 @@
-# filetool.py
-# Stand-alone Python 3.12+ module
-# Provides WriteRequest / EditRequest -> atomic file operations
-# Zero external deps beyond stdlib
-
+# filetool.py  –  JSON-safe file tools for Pydantic-AI agents
 from __future__ import annotations
 
 import difflib
+import inspect
 import os
+import sys
 import tempfile
-from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
-from typing import List, NewType, Protocol, TypedDict, Union
-
-# ------------- Domain Primitives ---------------------------------------------
-AbsolutePath = NewType("AbsolutePath", Path)
-Content = NewType("Content", str)
+from typing import List, Optional
+from pydantic import BaseModel
 
 
-class FileOperation(Enum):
-    """Enumeration of possible file operations."""
-    CREATE = "CREATE"
-    UPDATE = "UPDATE"
-    NOOP = "NOOP"
+# ---------- Custom Exception --------------------------------------------------
+class UserRejectedException(Exception):
+    """Raised when a user rejects a proposed file change."""
+
+    def __init__(
+        self, message: str, feedback: str = "", file_path: Optional[str] = None
+    ):
+        super().__init__(message)
+        self.feedback = feedback
+        self.file_path = file_path
 
 
-class ValidationError(TypedDict):
-    """Type definition for validation error messages."""
-    message: str
-    field: str | None
+# ---------- Parameter models (JSON-safe) ------------------------------------
+class WriteParams(BaseModel):
+    file_path: str
+    """Absolute or relative path to the file that should be written."""
+    content: str
+    """Text that will replace the entire content of the file."""
 
 
-# ------------- Requests ------------------------------------------------------
-@dataclass(slots=True)
-class WriteRequest:
-    """Request to write or overwrite a file with new content."""
-    file_path: AbsolutePath
-    content: Content
-
-
-@dataclass(slots=True)
-class EditRequest:
-    """Request to edit a file by replacing old content with new content."""
-    file_path: AbsolutePath
-    old: str
-    new: str
+class EditParams(BaseModel):
+    file_path: str
+    """Absolute or relative path to the file that should be modified."""
+    old: str = ""
+    """Substring that will be searched for and replaced. Empty string edits at file start."""
+    new: str = ""
+    """Replacement text."""
     expect: int = 1
+    """Number of expected `old` substring occurrences; mismatch raises an error."""
 
 
-Request = Union[WriteRequest, EditRequest]
-
-
-# ------------- Plan ----------------------------------------------------------
-@dataclass(slots=True)
-class Plan:
-    """Execution plan for a file operation containing original and corrected content."""
-    original: Content
-    corrected: Content
-    kind: FileOperation
-    diff_lines: List[str]
-
-
-# ------------- Validation ----------------------------------------------------
-def validate_path(p: AbsolutePath, workspace_root: Path) -> ValidationError | None:
-    """
-    Validate that a file path is within the workspace root directory.
-    
-    Args:
-        p: The absolute path to validate
-        workspace_root: The root directory of the workspace
-        
-    Returns:
-        ValidationError if path is invalid, None otherwise
-    """
+# ---------- Helpers ----------------------------------------------------------
+def _log(**ctx) -> None:
+    frame = inspect.currentframe()
     try:
-        resolved = p.resolve()
-    except Exception as exc:
-        return ValidationError(message=str(exc), field="file_path")
-    if not resolved.is_relative_to(workspace_root.resolve()):
-        return ValidationError(
-            message=f"Path must be inside workspace {workspace_root}", field="file_path"
-        )
-    return None
+        caller = frame.f_back.f_code.co_name  # type: ignore
+    finally:
+        del frame
+    kv = " ".join(f"{k}={v!r}" for k, v in ctx.items())
+    print(f"[filetool.{caller}] {kv}")
 
 
-def validate_content(c: Content) -> ValidationError | None:
-    """
-    Validate that content can be encoded as UTF-8.
-    
-    Args:
-        c: The content to validate
-        
+def _ask_user_feedback(diff: List[str]) -> tuple[bool, str]:
+    """Ask user for confirmation and collect feedback if rejected.
+
     Returns:
-        ValidationError if content is invalid, None otherwise
+        tuple: (accepted: bool, feedback: str)
+        feedback is empty string if accepted, contains user feedback if rejected
     """
-    try:
-        c.encode("utf-8")
-    except UnicodeError as exc:
-        return ValidationError(message=str(exc), field="content")
-    return None
+    if not diff:
+        return False, "No changes detected"
+
+    print("\n".join(diff))
+
+    while True:
+        try:
+            choice = input("Apply this change? [y/N/q - to quit] ").strip().lower()
+            if choice == "q":
+                print("Quitting.")
+                sys.exit(0)
+
+            if choice in {"y", "yes"}:
+                return True, ""
+
+            if choice in {"", "n", "no"}:
+                # Collect feedback when user rejects
+                feedback = input(
+                    "❌ Edit rejected. Please provide feedback (or press Enter for none): "
+                ).strip()
+                return False, feedback
+
+            # Handle other responses as rejection with feedback
+            feedback = choice if choice else "User rejected without feedback"
+            return False, feedback
+
+        except (KeyboardInterrupt, EOFError):
+            print("\nAborted by user.")
+            return False, "User interrupted the process"
 
 
-# ------------- Content Corrector --------------------------------------------
-class ContentCorrector(Protocol):
-    """Protocol for content correction implementations."""
-    async def correct(self, original: Content, proposed: Content) -> Content: ...
+def _ensure_in_workspace(path: Path) -> None:
+    resolved = path.resolve()
+    if not resolved.is_relative_to(Path.cwd().resolve()):
+        raise ValueError(f"Path must be inside workspace {Path.cwd()}")
 
 
-class IdentityCorrector:
-    """Content corrector that returns proposed content unchanged."""
-    async def correct(self, original: Content, proposed: Content) -> Content:
-        """Return the proposed content without any modifications."""
-        return proposed
-
-
-# ------------- Diff Renderer -------------------------------------------------
-def render_diff(name: str, old: Content, new: Content) -> List[str]:
-    """
-    Generate a unified diff between old and new content.
-    
-    Args:
-        name: Name of the file being diffed
-        old: Original content
-        new: New content
-        
-    Returns:
-        List of diff lines
-    """
+def _diff(name: str, old: str, new: str) -> List[str]:
     return list(
         difflib.unified_diff(
             old.splitlines(keepends=True),
@@ -138,288 +109,198 @@ def render_diff(name: str, old: Content, new: Content) -> List[str]:
     )
 
 
-# ------------- Core Pipeline -------------------------------------------------
-async def _read_or_empty(p: AbsolutePath) -> Content:
-    """
-    Read file content or return empty string if file doesn't exist.
-    
-    Args:
-        p: Path to the file to read
-        
-    Returns:
-        File content as string, or empty string if file doesn't exist
-    """
+def _read(path: Path) -> str:
     try:
-        return Content(p.read_text(encoding="utf-8"))
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return Content("")
+        return ""
 
 
-async def _build_write_plan(
-    req: WriteRequest, workspace: Path, corrector: ContentCorrector
-) -> Plan:
-    """
-    Build a plan for writing or overwriting a file.
-    
-    Args:
-        req: The write request
-        workspace: Workspace root directory
-        corrector: Content corrector to apply
-        
-    Returns:
-        Plan containing the operation details
-    """
-    original = await _read_or_empty(req.file_path)
-    corrected = await corrector.correct(original, req.content)
-    kind = FileOperation.UPDATE if original else FileOperation.CREATE
-    if original == corrected:
-        kind = FileOperation.NOOP
-    diff_lines = render_diff(req.file_path.name, original, corrected)
-    print(f"[_build_write_plan] kind={kind} file={req.file_path}")
-    return Plan(original, corrected, kind, diff_lines)
+# ---------- Core logic -------------------------------------------------------
+async def _write_core(p: Path, content: str) -> List[str]:
+    _log(file=str(p))
+    _ensure_in_workspace(p)
+
+    original = _read(p)
+    diff = _diff(p.name, original, content)
+    return diff
 
 
-async def _build_edit_plan(
-    req: EditRequest, workspace: Path, corrector: ContentCorrector
-) -> Plan:
-    """
-    Build a plan for editing a file by replacing content.
-    
-    Args:
-        req: The edit request
-        workspace: Workspace root directory
-        corrector: Content corrector to apply
-        
-    Returns:
-        Plan containing the operation details
-        
-    Raises:
-        ValueError: If file doesn't exist and old string is non-empty, or if
-                   old string is not found the expected number of times
-    """
-    original = await _read_or_empty(req.file_path)
+async def _edit_core(p: Path, old: str, new: str, expect: int) -> List[str]:
+    _log(file=str(p), old=old, new=new, expect=expect)
+    _ensure_in_workspace(p)
 
-    # 1.  Decide whether we are creating or editing
-    if not original and not req.old:  # create new file
-        corrected = await corrector.correct(original, Content(req.new))
-        kind = FileOperation.CREATE
-    elif not original and req.old:  # edit non-existent file
+    original = _read(p)
+    if not original and old:
         raise ValueError("Cannot edit non-existent file with non-empty old string")
-    else:  # normal edit
-        count = original.count(req.old)
-        if count == 0:
-            raise ValueError("old string not found")
-        if count != req.expect:
-            raise ValueError(f"expected {req.expect} occurrences, found {count}")
-        corrected_raw = original.replace(req.old, req.new)
-        corrected = await corrector.correct(original, Content(corrected_raw))
-        kind = FileOperation.UPDATE if original != corrected else FileOperation.NOOP
 
-    diff_lines = render_diff(req.file_path.name, original, corrected)
-    print(f"[_build_edit_plan] kind={kind} file={req.file_path}")
-    return Plan(original, corrected, kind, diff_lines)
+    count = original.count(old)
+    if count == 0:
+        raise ValueError("old string not found")
+    if count != expect:
+        raise ValueError(f"expected {expect} occurrences, found {count}")
+
+    corrected = original.replace(old, new)
+    diff = _diff(p.name, original, corrected)
+    return diff
 
 
-async def build_plan(
-    req: Request, workspace: Path, corrector: ContentCorrector | None = None
-) -> Plan:
-    """
-    Build an execution plan for a file operation request.
-    
-    Args:
-        req: The file operation request (write or edit)
-        workspace: Workspace root directory
-        corrector: Optional content corrector to apply
-        
-    Returns:
-        Plan containing the operation details
-        
-    Raises:
-        ValueError: If path validation fails or content validation fails
-    """
-    print(f"[build_plan] request={type(req).__name__} file={req.file_path}")
-    if (err := validate_path(req.file_path, workspace)) is not None:
-        raise ValueError(err["message"])
-    if isinstance(req, WriteRequest) and (err := validate_content(req.content)):
-        raise ValueError(err["message"])
-
-    c = corrector or IdentityCorrector()
-    if isinstance(req, WriteRequest):
-        return await _build_write_plan(req, workspace, c)
-    return await _build_edit_plan(req, workspace, c)
-
-
-async def commit_plan(plan: Plan) -> None:
-    """
-    Commit a plan by writing the corrected content to the file system.
-    
-    Args:
-        plan: The plan to commit
-        
-    Raises:
-        Exception: If file writing fails, the temporary file is cleaned up
-    """
-    if plan.kind == FileOperation.NOOP:
-        print("[commit_plan] NOOP – nothing to do")
-        return
-    p = Path(plan.corrected)  # just to extract parent
-    p = Path(p)  # type: ignore
-    p.parent.mkdir(parents=True, exist_ok=True)
+async def _commit(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=p.parent, delete=False
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
     ) as tmp:
-        tmp.write(plan.corrected)
+        tmp.write(text)
         tmp.flush()
         tmp_path = Path(tmp.name)
     try:
-        original_path = Path(plan.original)  # type: ignore
-        if original_path.exists():
-            stat = original_path.stat()
-            os.chmod(tmp_path, stat.st_mode)
-        tmp_path.replace(p)
-        print(f"[commit_plan] committed {p}")
+        if path.exists():
+            os.chmod(tmp_path, path.stat().st_mode)
+        tmp_path.replace(path)
+        _log(status="committed", file=str(path))
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
 
 
-# ------------- Public API ----------------------------------------------------
-async def write_file(
-    req: WriteRequest, workspace: Path, corrector: ContentCorrector | None = None
-) -> Plan:
+# ---------- Pydantic-AI tools ------------------------------------------------
+# ---------- Pydantic-AI tools ------------------------------------------------
+async def write_file(params: WriteParams) -> List[str]:
     """
-    Write or overwrite a file with new content.
-    
+    Create or overwrite a file after presenting a diff to the user for confirmation.
+
+    This tool calculates the difference between the current file content (if any)
+    and the proposed new `content`. It then displays this diff to the user and
+    waits for explicit confirmation ("y" or "yes"). If the user confirms, the
+    file is written. If the user rejects ("n", "no", or any other input), or if
+    the user provides feedback during rejection, a `UserRejectedException` is raised.
+    This exception contains the user's feedback, allowing the calling agent to
+    potentially refine its approach.
+
     Args:
-        req: The write request
-        workspace: Workspace root directory
-        corrector: Optional content corrector to apply
-        
+        params (WriteParams): An object containing:
+            - `file_path` (str): The path to the file.
+            - `content` (str): The new content for the file.
+
     Returns:
-        Plan containing the operation details
+        List[str]: A list of strings representing the unified diff of the
+                   changes that were applied.
+
+    Raises:
+        UserRejectedException: If the user does not confirm the change. The
+                               exception object includes the `feedback` provided
+                               by the user and the `file_path`.
+        ValueError: If the path is outside the allowed workspace.
+        IOError: If there is an error reading the existing file or writing the
+                 new one.
     """
-    print(f"[write_file] file={req.file_path}")
-    plan = await build_plan(req, workspace, corrector)
-    await commit_plan(plan)
-    return plan
+    path = Path(params.file_path).resolve()
+    diff = await _write_core(path, params.content)
+    approved, feedback = _ask_user_feedback(diff)
+    if approved:
+        await _commit(path, params.content)
+        _log(status="applied", file=str(path))
+    else:
+        _log(status="rejected", file=str(path), feedback=feedback)
+        raise UserRejectedException(
+            f"User rejected changes to {params.file_path}",
+            feedback=feedback,
+            file_path=params.file_path,
+        )
+    return diff
 
 
-async def edit_file(
-    req: EditRequest, workspace: Path, corrector: ContentCorrector | None = None
-) -> Plan:
+async def edit_file(params: EditParams) -> List[str]:
     """
-    Edit a file by replacing old content with new content.
-    
+    Replace text within an existing file after presenting a diff for confirmation.
+
+    This tool searches for the `old` substring within the specified file. If found
+    exactly `expect` times, it calculates the diff for replacing it with the `new`
+    substring. The diff is shown to the user for confirmation ("y" or "yes").
+    If confirmed, the change is applied. If the user rejects the change or provides
+    feedback, a `UserRejectedException` is raised, containing the feedback for
+    the agent to use.
+
     Args:
-        req: The edit request
-        workspace: Workspace root directory
-        corrector: Optional content corrector to apply
-        
+        params (EditParams): An object containing:
+            - `file_path` (str): The path to the file.
+            - `old` (str): The substring to be replaced. An empty string implies
+                           inserting `new` at the beginning of the file.
+            - `new` (str): The replacement text.
+            - `expect` (int, optional): The expected number of occurrences of
+                                        `old`. Defaults to 1. If the actual
+                                        count differs, an error is raised before
+                                        user confirmation.
+
     Returns:
-        Plan containing the operation details
+        List[str]: A list of strings representing the unified diff of the
+                   changes that were applied.
+
+    Raises:
+        UserRejectedException: If the user does not confirm the change. The
+                               exception object includes the `feedback` provided
+                               by the user and the `file_path`.
+        ValueError: If the path is outside the allowed workspace, if `old` is
+                    specified but the file doesn't exist, if `old` is not found
+                    the expected number of times, or if `old` is not found at all.
+        IOError: If there is an error reading the file or writing the changes.
     """
-    print(f"[edit_file] file={req.file_path}")
-    plan = await build_plan(req, workspace, corrector)
-    await commit_plan(plan)
-    return plan
+    path = Path(params.file_path).resolve()
+    diff = await _edit_core(path, params.old, params.new, params.expect)
+    approved, feedback = _ask_user_feedback(diff)
+    if approved:
+        original = _read(path)
+        corrected = original.replace(params.old, params.new)
+        await _commit(path, corrected)
+        _log(status="applied", file=str(path))
+    else:
+        _log(status="rejected", file=str(path), feedback=feedback)
+        raise UserRejectedException(
+            f"User rejected changes to {params.file_path}",
+            feedback=feedback,
+            file_path=params.file_path,
+        )
+    return diff
 
 
-# ------------------ Tools for agents --------------------------------
+# ---------- Batch Edit (Updated to handle exceptions) ------------------------
+class BatchEditItem(BaseModel):
+    file_path: str
+    """Absolute or relative path to the file that should be modified."""
+    old: str
+    """Substring that will be searched for and replaced."""
+    new: str
+    """Replacement text."""
+    expect: int = 1
+    """Number of expected `old` substring occurrences; mismatch raises an error."""
 
 
-async def fs_write(file_path: str, content: str) -> list[str]:
+class BatchEditParams(BaseModel):
+    edits: List[BatchEditItem]
+
+
+async def batch_edit(params: BatchEditParams) -> List[List[str]]:
+    """Apply several edits atomically; returns one diff per file.
+
+    Note: This implementation applies edits sequentially.
+    If any edit is rejected, a UserRejectedException is raised and
+    subsequent edits are not attempted. For true atomicity, a more complex
+    transactional system would be needed (e.g., applying all diffs to
+    temporary files first, then committing all).
     """
-    Create or completely overwrite a file in the current working directory.
-
-    Use this function when you need to:
-    • create a brand-new file
-    • replace the entire contents of an existing file
-
-    Parameters
-    ----------
-    file_path : str
-        Relative or absolute path to the file.  If relative, it is resolved
-        against the current working directory.  Parent directories are created
-        automatically if they do not exist.
-    content : str
-        The full text to write into the file.  Must be valid UTF-8.
-
-    Returns
-    -------
-    list[str]
-        A unified-diff of the change that would be applied (empty list if the
-        file already contains exactly the proposed content).
-
-    Raises
-    ------
-    ValueError
-        If the resolved path lies outside the current workspace or the content
-        cannot be encoded as UTF-8.
-    """
-    print(f"[fs_write] file_path={file_path}")
-    req = WriteRequest(
-        file_path=AbsolutePath(Path(file_path).resolve()),
-        content=Content(content),
-    )
-    plan = await build_plan(req, Path.cwd())
-    return plan.diff_lines
-
-
-async def fs_edit(
-    file_path: str,
-    old_string: str,
-    new_string: str,
-    expected_replacements: int = 1,
-) -> list[str]:
-    """
-    Perform a precise, line-aware edit on an existing file.
-
-    Use this function when you need to:
-    • change a specific substring or block of code
-    • insert new text at a known location (set `old_string` to the marker
-      you want to replace)
-    • delete a block (set `new_string` to an empty string)
-
-    The function performs a literal string replacement and validates that the
-    expected number of matches is found before applying the change.
-
-    Parameters
-    ----------
-    file_path : str
-        Relative or absolute path to the file.  If relative, it is resolved
-        against the current working directory.
-    old_string : str
-        Exact substring to locate in the current file content.  Leading/trailing
-        whitespace and newlines are significant.
-    new_string : str
-        Replacement text to insert in place of `old_string`.
-    expected_replacements : int, default 1
-        Number of times `old_string` must appear for the edit to succeed.
-        Set to 0 to allow creation of a new file (in which case `old_string`
-        must be empty).
-
-    Returns
-    -------
-    list[str]
-        A unified-diff of the change that would be applied.
-
-    Raises
-    ------
-    ValueError
-        • If the resolved path lies outside the current workspace.
-        • If `old_string` is not found the expected number of times.
-        • If the file does not exist and `old_string` is non-empty.
-    """
-    print(
-        f"[fs_edit] file_path={file_path} "
-        f"old_string={repr(old_string)} new_string={repr(new_string)} "
-        f"expected_replacements={expected_replacements}"
-    )
-    req = EditRequest(
-        file_path=AbsolutePath(Path(file_path).resolve()),
-        old=old_string,
-        new=new_string,
-        expect=expected_replacements,
-    )
-    plan = await build_plan(req, Path.cwd())
-    return plan.diff_lines
+    diffs = []
+    for item in params.edits:
+        try:
+            diff = await edit_file(
+                EditParams(
+                    file_path=item.file_path,
+                    old=item.old,
+                    new=item.new,
+                    expect=item.expect,
+                )
+            )
+            diffs.append(diff)
+        except UserRejectedException:
+            # Re-raise immediately, stopping the batch
+            raise
+    return diffs

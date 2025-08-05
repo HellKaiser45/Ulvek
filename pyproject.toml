@@ -1,13 +1,18 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ulvek"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agentic Coding Assistant"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.9.0",
     "aiofiles>=24.1.0",
     "chonkie[add,code]>=1.1.1",
+    "click>=8.2.1",
     "cryptography>=45.0.5",
     "langgraph>=0.5.4",
     "magika>=0.6.2",
@@ -18,3 +23,6 @@ dependencies = [
     "ripgrepy>=2.2.0",
     "sentence-transformers>=5.0.0",
 ]
+
+[project.scripts]
+ulvek = "src.cli.main:main"
