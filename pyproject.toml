@@ -20,6 +20,7 @@ dependencies = [
     "pathspec>=0.12.1",
     "pydantic>=2.11.7",
     "pydantic-ai>=0.4.7",
+    "rich-click>=1.8.9",
     "ripgrepy>=2.2.0",
     "sentence-transformers>=5.0.0",
 ]

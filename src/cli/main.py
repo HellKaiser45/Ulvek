@@ -6,7 +6,7 @@ import asyncio
 import sys
 from typing import Optional
 
-import click
+import rich_click as click
 
 from src.utils.logger import get_logger, WorkflowLogger
 from src.workflow.graph import run_agent
@@ -180,4 +180,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
