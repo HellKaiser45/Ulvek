@@ -1,33 +1,62 @@
 from __future__ import annotations
 
-import operator
-from typing import Annotated, TypedDict, Literal
+from pydantic import BaseModel
+from typing import Literal
 from langgraph.graph import START, END, StateGraph
+from langgraph.checkpoint.memory import InMemorySaver
 from src.agents.agent import (
     orchestrator_agent,
     coding_agent,
     evaluator_agent,
     context_retriever_agent,
     conversational_agent,
+    ExecutionStep,
 )
-from src.tools.memory import m as memory
 from src.tools.prompt_eval import predictor
 from src.tools.codebase import process_file, get_non_ignored_files
+from langchain_core.messages import HumanMessage, AIMessage, AnyMessage
+from src.utils.converters import langchain_to_pydantic
+from enum import StrEnum
 
 
+class Route(StrEnum):
+    CHAT = "chat"
+    CONTEXT = "context"
+    PLAN = "plan"
+    FEEDBACK = "feedback"
+    CODE = "code"
+    END = "__end__"
+
+
+checkpointer = InMemorySaver()
+
 # ------------------------------------------------------------------
-# 1. Unified state
+# Graph State
 # ------------------------------------------------------------------
-class State(TypedDict):
-    prompt: str
-    static_ctx: str
-    dynamic_ctx: str
-    tasks: Annotated[list[str], operator.add]
-    index: int
-    completed: dict[str, str]
-    final: str
-    route: Literal["chat", "need_context", "heavy", "default"]
-    candidate: str
+
+
+# -------------------------main wrapper graph state------------------
+class WrapperState(BaseModel):
+    messages_buffer: list[AnyMessage]
+    ctx: str = ""
+
+
+# --------------------------feedback worker graph state--------------
+class FeedbackState(BaseModel):
+    messages_buffer: list[AnyMessage]
+    id: int = 0
+    static_ctx: str = ""
+    dynamic_ctx: str = ""
+    work_done: str = ""
+    retry_loop: int = 0
+    grade: Literal["pass", "revision_needed"] | None = None
+
+
+# -------------------------Planner graph state-----------------------
+class PlannerState(BaseModel):
+    tasks: list[ExecutionStep] = []
+    gathered_context: str = ""
+    messages_buffer: list[AnyMessage] = []
 
 
 # ------------------------------------------------------------------
@@ -39,124 +68,390 @@ async def build_static() -> str:
     return "\n".join(f"- {f.file_path}: {f.description}" for f in desc)
 
 
+def feedback_router(state: FeedbackState) -> Literal[Route.CODE, Route.END]:
+    return Route.END if state.grade == "pass" else Route.CODE
+
+
 # ------------------------------------------------------------------
 # 3. Core nodes
 # ------------------------------------------------------------------
-async def router(state: State) -> dict[str, str]:
-    e = predictor(state["prompt"])
-    if e["task_type_prob"][0] > 0.9 and e["reasoning"][0] < 0.01:
-        return {"route": "chat"}
-    if e["contextual_knowledge"][0] > 0.5:
-        return {"route": "need_context"}
-    if e["reasoning"][0] > 0.2:
-        return {"route": "heavy"}
-    return {"route": "default"}
+# ---------------------------subgraphs nodes------------------------
 
 
-async def chat(state: State) -> dict[str, str]:
-    resp = await conversational_agent.run(state["prompt"])
-    memory.add([{"role": "assistant", "content": resp.output}], user_id="workflow")
-    return {"final": resp.output}
-
-
-async def refresh_static(state: State) -> dict[str, str]:
-    return {"static_ctx": await build_static()}
-
-
-async def context_node(state: State) -> dict[str, str]:
-    out = await context_retriever_agent.run(f"{state['static_ctx']}\n{state['prompt']}")
-    return {"dynamic_ctx": out.output}
-
-
-async def plan(state: State) -> dict[str, object]:
-    prompt = f"{state['static_ctx']}\n{state['dynamic_ctx']}\n{state['prompt']}"
-    tasks = (await orchestrator_agent.run(prompt)).output.tasks
-    return {"tasks": tasks, "index": 0, "completed": {}}
-
-
-async def worker(state: State) -> dict[str, str]:
-    task = state["tasks"][state["index"]]
-    prompt = f"{state['static_ctx']}\n{state['dynamic_ctx']}\nTask: {task}"
-    code = (await coding_agent.run(prompt)).output
-    return {"candidate": code}
-
-
-async def review(state: State) -> dict[str, object]:
-    task = state["tasks"][state["index"]]
-    review = await evaluator_agent.run(f"Task: {task}\n{state['candidate']}")
-    if review.output.grade == "pass":
-        memory.add(
-            [{"role": "assistant", "content": f"{task}: {state['candidate']}"}],
-            user_id="workflow",
+async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
+    if isinstance(state, WrapperState):
+        worker_state = FeedbackState(
+            messages_buffer=[state.messages_buffer[-1]],
+            static_ctx=state.ctx,
         )
-        state["completed"][task] = state["candidate"]
-        return {"index": state["index"] + 1}
-    state["dynamic_ctx"] = f"Feedback: {review.output.feedback}"
-    return {}  # Retry immediately
+        start_worker_graph = worker_feedback_subgraph.invoke(worker_state)
+        parse_worker_graph = FeedbackState(**start_worker_graph)
+
+        proper_output = f"""
+        Here is an overview of the changes I made:
+        {parse_worker_graph.work_done}
+        """
+
+        return {"messages_buffer": state.messages_buffer + [AIMessage(proper_output)]}
+
+    elif isinstance(state, PlannerState):
+        gathered_work_done = ""
+        for task in state.tasks:
+            init_messate = f"""
+            ## Task description
+            {task.description}
+            ---
+            ## Task guidelines
+            Please follow the guidelines below to complete the task:
+
+            {"\n".join(f"{guideline}" for guideline in task.guidelines)}
+           
+            ## Dependencies
+            You will focuse on {task.target_ressource} and its dependencies. 
+
+            Pay attention to the following files and their dependencies:
+            {task.file_dependencies}
+            
+            ## Final notes
+            You are working in a large project and you are not aware of the full project. 
+            To help you avoid mistakes that could impact the rest of the project, I will provide you with the following notes:
+            {"\n".join(f"{pitfall}" for pitfall in task.pitfalls)}
+            """
+            worker_state = FeedbackState(
+                messages_buffer=[HumanMessage(init_messate)],
+                id=task.task_id,
+            )
+            start_worker_graph = worker_feedback_subgraph.invoke(worker_state)
+            parse_worker_graph = FeedbackState(**start_worker_graph)
+
+            proper_output = f"""
+                For the task {task.task_id}, here is an overview of the changes I made:
+
+                {parse_worker_graph.work_done}
+                ---
+                """
+            gathered_work_done += proper_output + "\n"
+        return {
+            "messages_buffer": state.messages_buffer + [AIMessage(gathered_work_done)]
+        }
 
 
-async def collect(state: State) -> dict[str, str]:
-    final = "\n\n".join(f"{t}: {c}" for t, c in state["completed"].items())
-    memory.add([{"role": "assistant", "content": final}], user_id="workflow")
-    return {"final": final}
+async def heavy_subgraph_start(state: WrapperState):
+    heavy_state = PlannerState(
+        gathered_context=state.ctx,
+        messages_buffer=[state.messages_buffer[-1]],
+    )
+    heavy_graph = heavy_subgraph.invoke(heavy_state)
+    parse_heavy_graph = PlannerState(**heavy_graph)
+
+    return {
+        "messages_buffer": state.messages_buffer
+        + [AIMessage(parse_heavy_graph.gathered_context)]
+    }
 
 
-# ------------------------------------------------------------------
-# 4. Graph construction
-# ------------------------------------------------------------------
-graph = (
-    StateGraph(State)
-    .add_node("router", router)
-    .add_node("chat", chat)
-    .add_node("refresh_static", refresh_static)
-    .add_node("context", context_node)
-    .add_node("plan", plan)
-    .add_node("worker", worker)
-    .add_node("review", review)
-    .add_node("collect", collect)
-    .add_edge(START, "router")
-    .add_conditional_edges(
-        "router",
-        lambda s: s["route"],
+# ----------------------------nodes---------------------------------
+async def give_feedback_node(state: FeedbackState):
+    prompt_construction = f"""
+    The task to be done and evaluate is:
+    {state.messages_buffer[0].content}
+    ---
+    Here is the work done that should answer the task:
+    {state.messages_buffer[-1].content}
+    """
+
+    eval = (await evaluator_agent.run(prompt_construction)).output
+
+    if eval.grade == "pass":
+        return {"messages_buffer": state.messages_buffer}
+
+    else:
+        feedback_construction = f"""
+
+        This is my feedback on your work:
+        {eval.complete_feedback.feedback}
+
+        ## Some good points
+        {"\n".join(f"{good}" for good in eval.complete_feedback.strengths)}
+
+        ## Some bad points
+        {"\n".join(f"{bad}" for bad in eval.complete_feedback.weaknesses)}
+
+        ## what you need to do to improve
+        {eval.suggested_revision}
+
+        ## Alternative approach
+        If for some reason you can't to do the suggested revision, you can try the following alternative approach:
+        {eval.alternative_approach}
+        """
+
+        return {
+            "messages_buffer": state.messages_buffer
+            + [HumanMessage(feedback_construction)],
+            "retry_loop": state.retry_loop + 1,
+        }
+
+
+async def router_node(
+    state: WrapperState,
+) -> Literal[Route.CHAT, Route.CONTEXT, Route.PLAN, Route.CODE]:
+    e = predictor(state.messages_buffer[-1])
+    if e.task_type_prob[0] > 0.9 and e.reasoning[0] < 0.01:
+        return Route.CHAT
+    if e.contextual_knowledge[0] > 0.5:
+        return Route.CONTEXT
+    if e.reasoning[0] > 0.2:
+        return Route.PLAN
+    return Route.CODE
+
+
+async def worker_node(state: FeedbackState):
+    openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
+    prompt = f"""
+    ## Context to keep in mind
+    {state.dynamic_ctx}
+    --- 
+    ## Task
+    {state.messages_buffer[-1].content}
+    """
+    worker_call = (await coding_agent.run(prompt, message_history=openai_dicts)).output
+
+    file_details_parts = []
+    if worker_call.files_edited:  # Check if the list exists and is not None/empty
+        for file_edit in worker_call.files_edited:
+            # Handle potential None values safely using 'or'
+            operation = file_edit.operation_type or "unknown"
+            path = file_edit.file_path or "not specified"
+            diff_content = file_edit.diff or "No diff available."
+
+            detail = f"I made the {operation} operation following changes to the file {path}:\n{diff_content}"
+            file_details_parts.append(detail)
+    else:
+        file_details_parts.append("No files were edited.")
+
+    file_details_str = "\n\n---\n\n".join(
+        file_details_parts
+    )  # Separating each file's details
+
+    structured_output = f"""
+    ## Summary of the changes I made:
+    {worker_call.summary}
+
+    ## Thought process
+    ### Reasoning
+    {worker_call.reasoning_logic.description}
+
+    ### Steps I took
+    {worker_call.reasoning_logic.steps}
+
+    ## Personnal review of my work
+    {worker_call.self_review}
+   
+    ## Details of the changes
+    
+    {file_details_str}
+    
+    """
+
+    return {
+        "messages_buffer": state.messages_buffer + [AIMessage(structured_output)],
+        "dynamic_ctx": state.dynamic_ctx + ("\n\n---\n\n" + worker_call.research_notes)
+        if worker_call.research_notes
+        else "",
+        "work_done": structured_output,
+    }
+
+
+async def context_node(state: WrapperState):
+    openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
+    prompt = f"""
+    ## Context gathered so far
+    {state.ctx}
+    --- 
+    ## User requested task
+    {state.messages_buffer[-1].content}
+
+    Gather the necessary information to be able to plan the changes
+    """
+    context_call = (
+        await context_retriever_agent.run(prompt, message_history=openai_dicts)
+    ).output
+
+    code_snippets_structured = ""
+    for code_snippet in context_call.code_snippets:
+        if code_snippet.source == "documentation":
+            documentation_provider = (
+                code_snippet.documentation_provider or "not specified"
+            )
+
+            detail = f"""
+            I found the following code snippet thanks to {code_snippet.source}:
+            {code_snippet.code}
+            I found it relevant to the task because:
+            {code_snippet.relevance_reason}
+            it is extracted from the {documentation_provider} documentation.
+            """
+            code_snippets_structured += "\n\n---\n\n" + detail
+
+        elif code_snippet.source == "codebase":
+            file_path = code_snippet.file_path or "not specified"
+            start_line = code_snippet.start_line or "not specified"
+            end_line = code_snippet.end_line or "not specified"
+
+            detail = f"""
+            I found the following code snippet thanks to {code_snippet.source}:
+            {code_snippet.code}
+            I found it relevant to the task because:
+            {code_snippet.relevance_reason}
+            it is extracted from the {file_path} file.
+            It starts at line {start_line} and ends at line {end_line}.
+            """
+            code_snippets_structured += "\n\n---\n\n" + detail
+
+        else:
+            detail = f"""
+            I found the following code snippet thanks to {code_snippet.source}:
+            {code_snippet.code}
+            I found it relevant to the task because:
+            {code_snippet.relevance_reason}
+            """
+            code_snippets_structured += "\n\n---\n\n" + detail
+
+    structured_output = f"""
+    ## Summary of the gathered context:
+        Here is a summary of the gathered context:
+        {context_call.retrieval_summary}
+
+    ## Project structure overview
+        Here is an overview of the project structure:
+        ### Key directories
+        {"\n".join(context_call.project_structure.key_directories)}
+        ### Key files
+        {"\n".join(context_call.project_structure.key_files)}
+        ### Technologies used
+        {"\n".join(context_call.project_structure.technologies_used)}
+        
+        ### structure summary
+        {context_call.project_structure.summary}
+
+    ## Relevant code snippets (if any)
+        Here are the relevant code snippets:
+            {code_snippets_structured}
+    ## External context (if any)
+        Here is the external context:
+            {
+        "\n".join(
+            f'''
+                source: {ext.source}
+                t   itle: {ext.title}
+                content: 
+                {ext.content}
+                this is relevant to the task because:
+                {ext.relevance_reason}
+                '''
+            for ext in context_call.external_context
+        )
+    }
+    ## Potential gaps in the context (if any)
+        Here are the potential gaps in the context:
         {
-            "chat": "chat",
-            "need_context": "refresh_static",
-            "heavy": "refresh_static",
-            "default": "plan",
-        },
+        "\n".join(
+            context_call.gaps_identified
+            if context_call.gaps_identified
+            else "no gaps identified"
+        )
+    }
+
+    """
+
+    return {
+        "ctx": state.ctx + ("\n\n---\n\n" + structured_output),
+    }
+
+
+async def plan_node(state: PlannerState):
+    openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
+    prompt = f"""
+    ## Context gathered so far
+    {state.gathered_context}
+    --- 
+    ## User requested task
+    {state.messages_buffer[-1].content}
+
+    Plan the changes to be made
+    """
+    plan_call = (
+        await orchestrator_agent.run(prompt, message_history=openai_dicts)
+    ).output
+
+    return {"tasks": plan_call.steps}
+
+
+async def chat_node(state: WrapperState):
+    openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
+    prompt = f"""
+    ## Context to keep in mind
+    {state.ctx}
+    --- 
+    {state.messages_buffer[-1].content}
+    """
+
+    chat_call = (
+        await conversational_agent.run(prompt, message_history=openai_dicts)
+    ).output
+
+    return {
+        "messages_buffer": state.messages_buffer + [AIMessage(chat_call)],
+    }
+
+
+# ------------------------------------------------------------------
+# 4. Graphs construction
+# ------------------------------------------------------------------
+# -------------------------main wrapper graph state-----------------
+wrapper_graph = (
+    StateGraph(WrapperState)
+    .add_node(Route.CHAT, chat_node)
+    .add_node(
+        Route.CONTEXT,
+        context_node,
     )
-    .add_edge("refresh_static", "context")
-    .add_edge("context", "plan")
-    .add_edge("plan", "worker")
-    .add_edge("worker", "review")
-    .add_conditional_edges(
-        "review",
-        lambda s: "worker" if s["index"] < len(s["tasks"]) else "collect",
-        ["worker", "collect"],
-    )
-    .add_edge("collect", END)
-    .compile()
-)
+    .add_node(Route.PLAN, heavy_subgraph_start)
+    .add_node(Route.CODE, worker_feedback_subgraph_start)
+    .add_conditional_edges(START, router_node)
+    .add_edge(Route.CODE, Route.CODE)
+    .add_edge(Route.CHAT, END)
+    .add_edge(Route.CONTEXT, END)
+    .add_edge(Route.PLAN, END)
+).compile(checkpointer=checkpointer)
+
+worker_feedback_subgraph = (
+    StateGraph(FeedbackState)
+    .add_node(Route.CODE, worker_node)
+    .add_node(Route.FEEDBACK, give_feedback_node)
+    .add_edge(START, Route.CODE)
+    .add_edge(Route.CODE, Route.FEEDBACK)
+    .add_conditional_edges(Route.FEEDBACK, feedback_router)
+).compile()
+
+heavy_subgraph = (
+    StateGraph(PlannerState)
+    .add_node(Route.PLAN, plan_node)
+    .add_node(Route.CODE, worker_feedback_subgraph_start)
+    .add_edge(START, Route.PLAN)
+    .add_edge(Route.PLAN, Route.CODE)
+    .add_edge(Route.CODE, END)
+).compile()
 
 
 # ------------------------------------------------------------------
 # 5. Public API
 # ------------------------------------------------------------------
+
+
 async def run_agent(prompt: str) -> str:
-    memory.add([{"role": "user", "content": prompt}], user_id="workflow")
-    initial: State = {
-        "prompt": prompt,
-        "static_ctx": await build_static(),
-        "dynamic_ctx": "",
-        "tasks": [],
-        "index": 0,
-        "completed": {},
-        "final": "",
-        "route": "default",
-        "candidate": "",
-    }
-    out = await graph.ainvoke(initial)
-    return out["final"]
+    initial: WrapperState = WrapperState(messages_buffer=[HumanMessage(prompt)])
+    out = wrapper_graph.invoke(initial)
+    parsed_out = WrapperState(**out)
 
-
-""
+    return str(parsed_out.messages_buffer[-1].content)

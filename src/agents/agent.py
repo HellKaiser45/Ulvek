@@ -7,9 +7,12 @@ from typing import Literal
 from pydantic_ai import Tool
 from src.tools.interactive_tools import gather_docs_context, prompt_user
 from src.tools.search_files import search_files
-from src.tools.files_edit import write_file, edit_file, batch_edit
-from src.tools.terminal_executor import run_command, run_commands
-
+from src.tools.files_edit import write_file, edit_file
+from src.agents.prompts.chat import CONVERSATIONAL_AGENT_PROMPT
+from src.agents.prompts.reviewer import REVIEWER_AGENT_PROMPT
+from src.agents.prompts.orchestrator import ORCHESTRATOR_AGENT_PROMPT
+from src.agents.prompts.context_retriever import CONTEXT_RETRIEVER_PROMPT
+from src.agents.prompts.worker import CODING_AGENT_FULL_PROMPT
 
 model = OpenAIModel(
     model_name=settings.MODEL_NAME,
@@ -19,26 +22,6 @@ model = OpenAIModel(
     ),
 )
 
-azure_safety_template = """
-    You are an AI assistant.
-
-### Grounding
-    - Base every factual claim on **provided sources**; cite inline.  
-    - If sources are insufficient, state *“I cannot find this in the provided documents.”*
-
-### Neutrality
-    - Do **not** infer intent, sentiment, or background information.  
-    - Do **not** alter dates, times, or facts.
-
-### Professionalism
-    - Keep responses concise, on-topic, and professional.  
-    - Decline questions about your identity or capabilities.
-
-### Output
-    - Whenever possible, return **valid JSON or Markdown** as requested by the user.  
-    - Avoid speculative language (“might”, “probably”).
-    --------------------------------------------------------------------------------
-    """
 # -------------------------------------------------
 # Agents outputs models
 # -------------------------------------------------
@@ -92,7 +75,7 @@ class Evaluation(BaseModel):
 class FileEditOperation(BaseModel):
     """Represents a single file modification operation."""
 
-    oparion_type: Literal["create", "edit", "delete"] = Field(
+    operation_type: Literal["create", "edit", "delete"] = Field(
         ..., description="type of file operation"
     )
     file_path: str = Field(
@@ -368,23 +351,14 @@ class AssembledContext(BaseModel):
 
 evaluator_agent = Agent(
     model,
-    system_prompt=(
-        "You are a rigorous code reviewer. Provide actionable feedback.",
-        "Return JSON with: `grade` (pass/revision_needed) and `feedback`.",
-    ),
+    system_prompt=(REVIEWER_AGENT_PROMPT),
     output_type=Evaluation,
     name="evaluator_agent",
 )
 
 coding_agent = Agent(
     model,
-    system_prompt=(
-        "You are an expert software engineer. "
-        "Return ONLY the requested code snippet and a one-line explanation.",
-        "Before any calling any edit or write_file , make sure you know the file and dependencies it is using ",
-        "consider the whole app in your decisions",
-        "use your search_files tool to verify the exact text to replace.",
-    ),
+    system_prompt=(CODING_AGENT_FULL_PROMPT,),
     name="coding_agent",
     output_type=WorkerResult,
     tools=[
@@ -396,10 +370,7 @@ coding_agent = Agent(
 
 orchestrator_agent = Agent(
     model,
-    system_prompt=(
-        "You are a task-decomposition assistant. "
-        "Break the request into atomic, ordered Markdown to-do items.",
-    ),
+    system_prompt=(ORCHESTRATOR_AGENT_PROMPT,),
     output_type=ProjectPlan,
     name="orchestrator_agent",
 )
@@ -407,11 +378,7 @@ orchestrator_agent = Agent(
 # must return the tools output to use as the context later
 context_retriever_agent = Agent(
     model,
-    system_prompt=(
-        "you want to make sure you understand and have sufficient knowledge context."
-        "keep gathering information using the tools until you estimate it is not necessary anymore. "
-        "aggregate the output of the tools and return it raw",
-    ),
+    system_prompt=(CONTEXT_RETRIEVER_PROMPT,),
     name="context gatherer agent",
     output_type=AssembledContext,
     tools=[
@@ -423,14 +390,6 @@ context_retriever_agent = Agent(
 
 conversational_agent = Agent(
     model,
-    system_prompt=(
-        "You are a helpful, engaging AI assistant. "
-        "Conduct natural conversations, remember context throughout the discussion, "
-        "ask clarifying questions when needed, and provide thoughtful responses. "
-        "Be empathetic, concise, and focused on being genuinely helpful.",
-    ),
+    system_prompt=(CONVERSATIONAL_AGENT_PROMPT,),
     name="conversational_agent",
-    tools=[
-        Tool(prompt_user),
-    ],
 )
