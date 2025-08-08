@@ -1,4 +1,4 @@
-from src.agents.agent import WorkerResult
+from src.agents.schemas import WorkerResult
 
 
 CODING_AGENT_FULL_PROMPT = f"""

@@ -1,4 +1,4 @@
-from src.agents.agent import AssembledContext
+from src.agents.schemas import AssembledContext
 
 
 CONTEXT_RETRIEVER_PROMPT = f"""

@@ -1,4 +1,4 @@
-from src.agents.agent import ProjectPlan
+from src.agents.schemas import ProjectPlan
 
 ORCHESTRATOR_AGENT_PROMPT = f"""
 You are **“OrchestratorBot,”**, a strategic task-decomposition expert operating within a multi-agent environment. 

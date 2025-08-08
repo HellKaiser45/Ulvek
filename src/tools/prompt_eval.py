@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 from transformers import AutoConfig, AutoModel, AutoTokenizer
+from pydantic import BaseModel
 
 
 class MeanPooling(nn.Module):
@@ -211,6 +212,20 @@ class PromptComplexityPredictor:
 
         with torch.no_grad():
             return self.model(encoded)
+
+
+class PromptAnalysis(BaseModel):
+    task_type_1: list[str]
+    task_type_2: list[str]
+    task_type_prob: list[float]
+    creativity_scope: list[float]
+    reasoning: list[float]
+    contextual_knowledge: list[float]
+    number_of_few_shots: list[float]
+    domain_knowledge: list[float]
+    no_label_reason: list[float]
+    constraint_ct: list[float]
+    prompt_complexity_score: list[float]
 
 
 predictor = PromptComplexityPredictor()

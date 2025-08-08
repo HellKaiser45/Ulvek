@@ -10,25 +10,19 @@ from src.agents.agent import (
     evaluator_agent,
     context_retriever_agent,
     conversational_agent,
-    ExecutionStep,
+    task_classification_agent,
 )
-from src.tools.prompt_eval import predictor
+from src.agents.schemas import ExecutionStep, Route
+from src.tools.prompt_eval import predictor, PromptAnalysis
 from src.tools.codebase import process_file, get_non_ignored_files
 from langchain_core.messages import HumanMessage, AIMessage, AnyMessage
 from src.utils.converters import langchain_to_pydantic
-from enum import StrEnum
-
-
-class Route(StrEnum):
-    CHAT = "chat"
-    CONTEXT = "context"
-    PLAN = "plan"
-    FEEDBACK = "feedback"
-    CODE = "code"
-    END = "__end__"
+from src.utils.logger import get_logger
 
 
 checkpointer = InMemorySaver()
+logger = get_logger(__name__)
+
 
 # ------------------------------------------------------------------
 # Graph State
@@ -79,12 +73,15 @@ def feedback_router(state: FeedbackState) -> Literal[Route.CODE, Route.END]:
 
 
 async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
+    logger.debug("Worker feedback subgraph start")
+
     if isinstance(state, WrapperState):
         worker_state = FeedbackState(
             messages_buffer=[state.messages_buffer[-1]],
             static_ctx=state.ctx,
         )
-        start_worker_graph = worker_feedback_subgraph.invoke(worker_state)
+        logger.debug(f"Worker feedback subgraph start: {worker_state}")
+        start_worker_graph = await worker_feedback_subgraph.ainvoke(worker_state)
         parse_worker_graph = FeedbackState(**start_worker_graph)
 
         proper_output = f"""
@@ -121,7 +118,7 @@ async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
                 messages_buffer=[HumanMessage(init_messate)],
                 id=task.task_id,
             )
-            start_worker_graph = worker_feedback_subgraph.invoke(worker_state)
+            start_worker_graph = await worker_feedback_subgraph.ainvoke(worker_state)
             parse_worker_graph = FeedbackState(**start_worker_graph)
 
             proper_output = f"""
@@ -141,7 +138,7 @@ async def heavy_subgraph_start(state: WrapperState):
         gathered_context=state.ctx,
         messages_buffer=[state.messages_buffer[-1]],
     )
-    heavy_graph = heavy_subgraph.invoke(heavy_state)
+    heavy_graph = await heavy_subgraph.ainvoke(heavy_state)
     parse_heavy_graph = PlannerState(**heavy_graph)
 
     return {
@@ -195,14 +192,12 @@ async def give_feedback_node(state: FeedbackState):
 async def router_node(
     state: WrapperState,
 ) -> Literal[Route.CHAT, Route.CONTEXT, Route.PLAN, Route.CODE]:
-    e = predictor(state.messages_buffer[-1])
-    if e.task_type_prob[0] > 0.9 and e.reasoning[0] < 0.01:
-        return Route.CHAT
-    if e.contextual_knowledge[0] > 0.5:
-        return Route.CONTEXT
-    if e.reasoning[0] > 0.2:
-        return Route.PLAN
-    return Route.CODE
+    logger.debug(f"Task classification agent for {state.messages_buffer[-1].content}")
+    e = (
+        await task_classification_agent.run(str(state.messages_buffer[-1].content))
+    ).output
+    logger.debug(f"Task classification agent result: {e}")
+    return e.task_type
 
 
 async def worker_node(state: FeedbackState):
@@ -395,10 +390,12 @@ async def chat_node(state: WrapperState):
     --- 
     {state.messages_buffer[-1].content}
     """
+    logger.info(f"Chat: {prompt}")
 
     chat_call = (
         await conversational_agent.run(prompt, message_history=openai_dicts)
     ).output
+    logger.info(f"Chat result: {chat_call}")
 
     return {
         "messages_buffer": state.messages_buffer + [AIMessage(chat_call)],
@@ -423,7 +420,7 @@ wrapper_graph = (
     .add_edge(Route.CHAT, END)
     .add_edge(Route.CONTEXT, END)
     .add_edge(Route.PLAN, END)
-).compile(checkpointer=checkpointer)
+).compile()
 
 worker_feedback_subgraph = (
     StateGraph(FeedbackState)
@@ -451,7 +448,7 @@ heavy_subgraph = (
 
 async def run_agent(prompt: str) -> str:
     initial: WrapperState = WrapperState(messages_buffer=[HumanMessage(prompt)])
-    out = wrapper_graph.invoke(initial)
+    out = await wrapper_graph.ainvoke(initial)
     parsed_out = WrapperState(**out)
 
     return str(parsed_out.messages_buffer[-1].content)
