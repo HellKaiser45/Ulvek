@@ -75,20 +75,22 @@ def process_multiple_messages_with_temp_memory(
     run_id: str | None = None,
 ) -> list[str]:
     session_id = run_id or f"temp_{int(time.time())}"
-    memory: Memory = Memory.from_config(config)
 
-    for i in range(0, len(messages_batch), batch_size):
-        batch = messages_batch[i : i + batch_size]
-        memory.add(batch, run_id=session_id, infer=inference)
+    try:
+        for i in range(0, len(messages_batch), batch_size):
+            batch = messages_batch[i : i + batch_size]
+            m.add(batch, run_id=session_id, infer=inference)
 
-    search_params = {
-        "query": query,
-        "run_id": session_id,
-        "limit": limit,
-        "threshold": threshold,
-    }
+        search_params = {
+            "query": query,
+            "run_id": session_id,
+            "limit": limit,
+            "threshold": threshold,
+        }
 
-    results = memory.search(**search_params)
-    valid_results = SearchResponse(**results)
+        results = m.search(**search_params)
+        valid_results = SearchResponse(**results)
 
-    return [result.memory for result in valid_results.results]
+        return [result.memory for result in valid_results.results]
+    finally:
+        m.delete_all(run_id=session_id)

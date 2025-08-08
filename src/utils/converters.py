@@ -1,14 +1,15 @@
 from langchain_core.messages.utils import convert_to_openai_messages, AnyMessage
 from src.config import tokenizer
+from typing import Sequence
 
 
-def langchain_to_pydantic(history: list[AnyMessage]) -> dict | list[dict]:
+def langchain_to_pydantic(history: Sequence[AnyMessage]) -> list[dict]:
     """
-    Convert LangGraph `messages` (HumanMessage, AIMessage, ToolMessage...)
-    into Pydantic-AI ModelMessage objects.
+    Convert LangGraph messages → OpenAI dict list for PydanticAI.
+    Guarantees a list is always returned.
     """
     openai_dicts = convert_to_openai_messages(history)
-    return openai_dicts
+    return openai_dicts if isinstance(openai_dicts, list) else [openai_dicts]
 
 
 def token_count(messages: str | list[str]) -> int:
