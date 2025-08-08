@@ -69,7 +69,7 @@ def process_multiple_messages_with_temp_memory(
     messages_batch: list[dict[str, str]],
     query: str,
     inference: bool = False,
-    batch_size: int = 5000,
+    batch_size: int = 200,
     limit: int = 3,
     threshold: float = 0.5,
     run_id: str | None = None,

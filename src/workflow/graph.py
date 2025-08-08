@@ -13,11 +13,11 @@ from src.agents.agent import (
     task_classification_agent,
 )
 from src.agents.schemas import ExecutionStep, Route
-from src.tools.prompt_eval import predictor, PromptAnalysis
 from src.tools.codebase import process_file, get_non_ignored_files
 from langchain_core.messages import HumanMessage, AIMessage, AnyMessage
-from src.utils.converters import langchain_to_pydantic
+from src.utils.converters import langchain_to_pydantic, token_count
 from src.utils.logger import get_logger
+from pydantic_ai import UnexpectedModelBehavior, capture_run_messages
 
 
 checkpointer = InMemorySaver()
@@ -157,47 +157,67 @@ async def give_feedback_node(state: FeedbackState):
     {state.messages_buffer[-1].content}
     """
 
-    eval = (await evaluator_agent.run(prompt_construction)).output
+    tokens = token_count(prompt_construction)
 
-    if eval.grade == "pass":
-        return {"messages_buffer": state.messages_buffer}
+    logger.debug(f"Evaluator of {tokens} agent for {prompt_construction}")
+    eval = None
+    with capture_run_messages() as messages:
+        try:
+            eval = (await evaluator_agent.run(prompt_construction)).output
+        except UnexpectedModelBehavior as e:
+            logger.error(f"Unexpected model behavior error: {e}")
+            logger.debug(f"cause of the error: {e.__cause__}")
+            logger.debug(f"meessages: {messages}")
+    if eval:
+        if eval.grade == "pass":
+            return {"messages_buffer": state.messages_buffer}
 
-    else:
-        feedback_construction = f"""
+        else:
+            feedback_construction = f"""
 
-        This is my feedback on your work:
-        {eval.complete_feedback.feedback}
+            This is my feedback on your work:
+            {eval.complete_feedback.feedback}
 
-        ## Some good points
-        {"\n".join(f"{good}" for good in eval.complete_feedback.strengths)}
+            ## Some good points
+            {"\n".join(f"{good}" for good in eval.complete_feedback.strengths)}
 
-        ## Some bad points
-        {"\n".join(f"{bad}" for bad in eval.complete_feedback.weaknesses)}
+            ## Some bad points
+            {"\n".join(f"{bad}" for bad in eval.complete_feedback.weaknesses)}
 
-        ## what you need to do to improve
-        {eval.suggested_revision}
+            ## what you need to do to improve
+            {eval.suggested_revision}
 
-        ## Alternative approach
-        If for some reason you can't to do the suggested revision, you can try the following alternative approach:
-        {eval.alternative_approach}
-        """
+            ## Alternative approach
+            If for some reason you can't to do the suggested revision, you can try the following alternative approach:
+            {eval.alternative_approach}
+            """
 
-        return {
-            "messages_buffer": state.messages_buffer
-            + [HumanMessage(feedback_construction)],
-            "retry_loop": state.retry_loop + 1,
-        }
+            return {
+                "messages_buffer": state.messages_buffer
+                + [HumanMessage(feedback_construction)],
+                "retry_loop": state.retry_loop + 1,
+            }
 
 
 async def router_node(
     state: WrapperState,
 ) -> Literal[Route.CHAT, Route.CONTEXT, Route.PLAN, Route.CODE]:
     logger.debug(f"Task classification agent for {state.messages_buffer[-1].content}")
-    e = (
-        await task_classification_agent.run(str(state.messages_buffer[-1].content))
-    ).output
-    logger.debug(f"Task classification agent result: {e}")
-    return e.task_type
+    e = Route.CHAT
+    with capture_run_messages() as messages:
+        try:
+            e = (
+                await task_classification_agent.run(
+                    str(state.messages_buffer[-1].content)
+                )
+            ).output
+            return e.task_type
+        except UnexpectedModelBehavior as error:
+            logger.error(f"Unexpected model behavior error: {error}")
+            logger.debug(f"cause of the error: {error.__cause__}")
+            logger.debug(f"meessages: {messages}")
+        logger.debug(f"Task classification agent result: {e}")
+    return e
 
 
 async def worker_node(state: FeedbackState):
@@ -209,52 +229,66 @@ async def worker_node(state: FeedbackState):
     ## Task
     {state.messages_buffer[-1].content}
     """
-    worker_call = (await coding_agent.run(prompt, message_history=openai_dicts)).output
+    tokens = token_count(prompt)
 
-    file_details_parts = []
-    if worker_call.files_edited:  # Check if the list exists and is not None/empty
-        for file_edit in worker_call.files_edited:
-            # Handle potential None values safely using 'or'
-            operation = file_edit.operation_type or "unknown"
-            path = file_edit.file_path or "not specified"
-            diff_content = file_edit.diff or "No diff available."
+    logger.debug(f"Coding agent of {tokens} agent for {prompt}")
 
-            detail = f"I made the {operation} operation following changes to the file {path}:\n{diff_content}"
-            file_details_parts.append(detail)
-    else:
-        file_details_parts.append("No files were edited.")
+    worker_call = None
+    with capture_run_messages() as messages:
+        try:
+            worker_call = (
+                await coding_agent.run(prompt, message_history=openai_dicts)
+            ).output
+        except UnexpectedModelBehavior as e:
+            logger.error(f"Unexpected model behavior error: {e}")
+            logger.debug(f"cause of the error: {e.__cause__}")
+            logger.debug(f"meessages: {messages}")
+    if worker_call:
+        file_details_parts = []
+        if worker_call.files_edited:  # Check if the list exists and is not None/empty
+            for file_edit in worker_call.files_edited:
+                # Handle potential None values safely using 'or'
+                operation = file_edit.operation_type or "unknown"
+                path = file_edit.file_path or "not specified"
+                diff_content = file_edit.diff or "No diff available."
 
-    file_details_str = "\n\n---\n\n".join(
-        file_details_parts
-    )  # Separating each file's details
+                detail = f"I made the {operation} operation following changes to the file {path}:\n{diff_content}"
+                file_details_parts.append(detail)
+        else:
+            file_details_parts.append("No files were edited.")
 
-    structured_output = f"""
-    ## Summary of the changes I made:
-    {worker_call.summary}
+        file_details_str = "\n\n---\n\n".join(
+            file_details_parts
+        )  # Separating each file's details
 
-    ## Thought process
-    ### Reasoning
-    {worker_call.reasoning_logic.description}
+        structured_output = f"""
+        ## Summary of the changes I made:
+        {worker_call.summary}
 
-    ### Steps I took
-    {worker_call.reasoning_logic.steps}
+        ## Thought process
+        ### Reasoning
+        {worker_call.reasoning_logic.description}
 
-    ## Personnal review of my work
-    {worker_call.self_review}
-   
-    ## Details of the changes
+        ### Steps I took
+        {worker_call.reasoning_logic.steps}
+
+        ## Personnal review of my work
+        {worker_call.self_review}
     
-    {file_details_str}
-    
-    """
+        ## Details of the changes
+        
+        {file_details_str}
+        
+        """
 
-    return {
-        "messages_buffer": state.messages_buffer + [AIMessage(structured_output)],
-        "dynamic_ctx": state.dynamic_ctx + ("\n\n---\n\n" + worker_call.research_notes)
-        if worker_call.research_notes
-        else "",
-        "work_done": structured_output,
-    }
+        return {
+            "messages_buffer": state.messages_buffer + [AIMessage(structured_output)],
+            "dynamic_ctx": state.dynamic_ctx
+            + ("\n\n---\n\n" + worker_call.research_notes)
+            if worker_call.research_notes
+            else "",
+            "work_done": structured_output,
+        }
 
 
 async def context_node(state: WrapperState):
@@ -268,100 +302,111 @@ async def context_node(state: WrapperState):
 
     Gather the necessary information to be able to plan the changes
     """
-    context_call = (
-        await context_retriever_agent.run(prompt, message_history=openai_dicts)
-    ).output
+    tokens = token_count(prompt)
 
-    code_snippets_structured = ""
-    for code_snippet in context_call.code_snippets:
-        if code_snippet.source == "documentation":
-            documentation_provider = (
-                code_snippet.documentation_provider or "not specified"
+    logger.debug(f"Context retriever agent of {tokens} agent for {prompt}")
+    context_call = None
+    with capture_run_messages() as messages:
+        try:
+            context_call = (
+                await context_retriever_agent.run(prompt, message_history=openai_dicts)
+            ).output
+        except UnexpectedModelBehavior as e:
+            logger.error(f"Unexpected model behavior error: {e}")
+            logger.debug(f"cause of the error: {e.__cause__}")
+            logger.debug(f"meessages: {messages}")
+
+    if context_call:
+        code_snippets_structured = ""
+        for code_snippet in context_call.code_snippets:
+            if code_snippet.source == "documentation":
+                documentation_provider = (
+                    code_snippet.documentation_provider or "not specified"
+                )
+
+                detail = f"""
+                I found the following code snippet thanks to {code_snippet.source}:
+                {code_snippet.code}
+                I found it relevant to the task because:
+                {code_snippet.relevance_reason}
+                it is extracted from the {documentation_provider} documentation.
+                """
+                code_snippets_structured += "\n\n---\n\n" + detail
+
+            elif code_snippet.source == "codebase":
+                file_path = code_snippet.file_path or "not specified"
+                start_line = code_snippet.start_line or "not specified"
+                end_line = code_snippet.end_line or "not specified"
+
+                detail = f"""
+                I found the following code snippet thanks to {code_snippet.source}:
+                {code_snippet.code}
+                I found it relevant to the task because:
+                {code_snippet.relevance_reason}
+                it is extracted from the {file_path} file.
+                It starts at line {start_line} and ends at line {end_line}.
+                """
+                code_snippets_structured += "\n\n---\n\n" + detail
+
+            else:
+                detail = f"""
+                I found the following code snippet thanks to {code_snippet.source}:
+                {code_snippet.code}
+                I found it relevant to the task because:
+                {code_snippet.relevance_reason}
+                """
+                code_snippets_structured += "\n\n---\n\n" + detail
+
+        structured_output = f"""
+        ## Summary of the gathered context:
+            Here is a summary of the gathered context:
+            {context_call.retrieval_summary}
+
+        ## Project structure overview
+            Here is an overview of the project structure:
+            ### Key directories
+            {"\n".join(context_call.project_structure.key_directories)}
+            ### Key files
+            {"\n".join(context_call.project_structure.key_files)}
+            ### Technologies used
+            {"\n".join(context_call.project_structure.technologies_used)}
+            
+            ### structure summary
+            {context_call.project_structure.summary}
+
+        ## Relevant code snippets (if any)
+            Here are the relevant code snippets:
+                {code_snippets_structured}
+        ## External context (if any)
+            Here is the external context:
+                {
+            "\n".join(
+                f'''
+                    source: {ext.source}
+                    t   itle: {ext.title}
+                    content: 
+                    {ext.content}
+                    this is relevant to the task because:
+                    {ext.relevance_reason}
+                    '''
+                for ext in context_call.external_context
             )
-
-            detail = f"""
-            I found the following code snippet thanks to {code_snippet.source}:
-            {code_snippet.code}
-            I found it relevant to the task because:
-            {code_snippet.relevance_reason}
-            it is extracted from the {documentation_provider} documentation.
-            """
-            code_snippets_structured += "\n\n---\n\n" + detail
-
-        elif code_snippet.source == "codebase":
-            file_path = code_snippet.file_path or "not specified"
-            start_line = code_snippet.start_line or "not specified"
-            end_line = code_snippet.end_line or "not specified"
-
-            detail = f"""
-            I found the following code snippet thanks to {code_snippet.source}:
-            {code_snippet.code}
-            I found it relevant to the task because:
-            {code_snippet.relevance_reason}
-            it is extracted from the {file_path} file.
-            It starts at line {start_line} and ends at line {end_line}.
-            """
-            code_snippets_structured += "\n\n---\n\n" + detail
-
-        else:
-            detail = f"""
-            I found the following code snippet thanks to {code_snippet.source}:
-            {code_snippet.code}
-            I found it relevant to the task because:
-            {code_snippet.relevance_reason}
-            """
-            code_snippets_structured += "\n\n---\n\n" + detail
-
-    structured_output = f"""
-    ## Summary of the gathered context:
-        Here is a summary of the gathered context:
-        {context_call.retrieval_summary}
-
-    ## Project structure overview
-        Here is an overview of the project structure:
-        ### Key directories
-        {"\n".join(context_call.project_structure.key_directories)}
-        ### Key files
-        {"\n".join(context_call.project_structure.key_files)}
-        ### Technologies used
-        {"\n".join(context_call.project_structure.technologies_used)}
-        
-        ### structure summary
-        {context_call.project_structure.summary}
-
-    ## Relevant code snippets (if any)
-        Here are the relevant code snippets:
-            {code_snippets_structured}
-    ## External context (if any)
-        Here is the external context:
+        }
+        ## Potential gaps in the context (if any)
+            Here are the potential gaps in the context:
             {
-        "\n".join(
-            f'''
-                source: {ext.source}
-                t   itle: {ext.title}
-                content: 
-                {ext.content}
-                this is relevant to the task because:
-                {ext.relevance_reason}
-                '''
-            for ext in context_call.external_context
-        )
-    }
-    ## Potential gaps in the context (if any)
-        Here are the potential gaps in the context:
-        {
-        "\n".join(
-            context_call.gaps_identified
-            if context_call.gaps_identified
-            else "no gaps identified"
-        )
-    }
+            "\n".join(
+                context_call.gaps_identified
+                if context_call.gaps_identified
+                else "no gaps identified"
+            )
+        }
 
-    """
+        """
 
-    return {
-        "ctx": state.ctx + ("\n\n---\n\n" + structured_output),
-    }
+        return {
+            "ctx": state.ctx + ("\n\n---\n\n" + structured_output),
+        }
 
 
 async def plan_node(state: PlannerState):
@@ -375,11 +420,20 @@ async def plan_node(state: PlannerState):
 
     Plan the changes to be made
     """
-    plan_call = (
-        await orchestrator_agent.run(prompt, message_history=openai_dicts)
-    ).output
-
-    return {"tasks": plan_call.steps}
+    tokens = token_count(prompt)
+    logger.debug(f"plan retriever agent of {tokens} tokens for prompt: {prompt}")
+    plan_call = None
+    with capture_run_messages() as messages:
+        try:
+            plan_call = (
+                await orchestrator_agent.run(prompt, message_history=openai_dicts)
+            ).output
+        except UnexpectedModelBehavior as e:
+            logger.error(f"Unexpected model behavior error: {e}")
+            logger.debug(f"cause of the error: {e.__cause__}")
+            logger.debug(f"meessages: {messages}")
+    if plan_call:
+        return {"tasks": plan_call.steps}
 
 
 async def chat_node(state: WrapperState):
@@ -391,15 +445,24 @@ async def chat_node(state: WrapperState):
     {state.messages_buffer[-1].content}
     """
     logger.info(f"Chat: {prompt}")
+    tokens = token_count(prompt)
+    logger.debug(f"chat retriever agent of {tokens} tokens for prompt: {prompt}")
 
-    chat_call = (
-        await conversational_agent.run(prompt, message_history=openai_dicts)
-    ).output
-    logger.info(f"Chat result: {chat_call}")
+    chat_call = None
+    with capture_run_messages() as messages:
+        try:
+            chat_call = (
+                await conversational_agent.run(prompt, message_history=openai_dicts)
+            ).output
+        except UnexpectedModelBehavior as e:
+            logger.error(f"Unexpected model behavior error: {e}")
+            logger.debug(f"cause of the error: {e.__cause__}")
+            logger.debug(f"meessages: {messages}")
 
-    return {
-        "messages_buffer": state.messages_buffer + [AIMessage(chat_call)],
-    }
+    if chat_call:
+        return {
+            "messages_buffer": state.messages_buffer + [AIMessage(chat_call)],
+        }
 
 
 # ------------------------------------------------------------------
@@ -416,9 +479,8 @@ wrapper_graph = (
     .add_node(Route.PLAN, heavy_subgraph_start)
     .add_node(Route.CODE, worker_feedback_subgraph_start)
     .add_conditional_edges(START, router_node)
-    .add_edge(Route.CODE, Route.CODE)
+    .add_edge(Route.CONTEXT, Route.PLAN)
     .add_edge(Route.CHAT, END)
-    .add_edge(Route.CONTEXT, END)
     .add_edge(Route.PLAN, END)
 ).compile()
 
