@@ -41,7 +41,6 @@ class FeedbackState(BaseModel):
     id: int = 0
     static_ctx: str = ""
     dynamic_ctx: str = ""
-    work_done: str = ""
     retry_loop: int = 0
     grade: Literal["pass", "revision_needed"] | None = None
 
@@ -86,7 +85,7 @@ async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
 
         proper_output = f"""
         Here is an overview of the changes I made:
-        {parse_worker_graph.work_done}
+        {parse_worker_graph.messages_buffer[-1].content}
         """
 
         return {"messages_buffer": state.messages_buffer + [AIMessage(proper_output)]}
@@ -124,7 +123,7 @@ async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
             proper_output = f"""
                 For the task {task.task_id}, here is an overview of the changes I made:
 
-                {parse_worker_graph.work_done}
+                {parse_worker_graph.messages_buffer[-1]}
                 ---
                 """
             gathered_work_done += proper_output + "\n"
@@ -212,8 +211,13 @@ async def worker_node(state: FeedbackState):
     {state.dynamic_ctx}
     --- 
     ## Task
-    {state.messages_buffer[-1].content}
+    {state.messages_buffer[0].content}
     """
+    prompt += (
+        f"\n\n---\n\nLatest feedback: {state.messages_buffer[-1].content}"
+        if state.retry_loop > 0
+        else ""
+    )
     tokens = token_count(prompt)
 
     logger.debug(f"Coding agent of {tokens} agent for {prompt}")
@@ -263,7 +267,6 @@ async def worker_node(state: FeedbackState):
         "dynamic_ctx": state.dynamic_ctx + ("\n\n---\n\n" + worker_call.research_notes)
         if worker_call.research_notes
         else "",
-        "work_done": structured_output,
     }
 
 

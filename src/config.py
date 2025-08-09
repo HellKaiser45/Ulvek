@@ -39,6 +39,36 @@ class AppConfig(BaseSettings):
         default=128000, description="Maximum context tokens to use for the models"
     )
 
+    @classmethod
+    def get_rich_click_config(cls):
+        from rich_click import RichHelpConfiguration
+
+        return RichHelpConfiguration(
+            text_markup="markdown",
+            style_option="bold blue",
+            style_argument="bold cyan",
+            style_command="bold magenta",
+            style_switch="bold green",
+            style_metavar="bold yellow",
+            style_usage="bold",
+            style_header_text="bold",
+            style_footer_text="italic dim",
+            style_option_help="default",
+            style_option_default="dim",
+            style_errors_suggestion="italic yellow",
+            style_errors_panel_border="red",
+            style_aborted="red bold",
+            errors_suggestion="Try running the '--help' flag for more information.",
+            show_arguments=True,
+            group_arguments_options=False,
+            width=100,
+            max_width=120,
+            style_options_table_leading=0,
+            style_options_table_box="SIMPLE",
+            style_commands_table_leading=0,
+            style_commands_table_box="SIMPLE",
+        )
+
 
 settings = AppConfig()
 

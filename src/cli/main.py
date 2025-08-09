@@ -1,182 +1,195 @@
-"""
-Interactive command-line interface for the Agentic Coding Assistant.
-"""
+# src/cli/main.py
+from __future__ import annotations
 
 import asyncio
-import sys
+from pathlib import Path
 from typing import Optional
 
-import rich_click as click
+import typer
+from prompt_toolkit.application import Application
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.styles import Style
+from prompt_toolkit.history import InMemoryHistory
 
-from src.utils.logger import get_logger, WorkflowLogger
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.status import Status
+from rich.table import Table
+from rich import box
+
+from src.config import settings
+from src.utils.logger import WorkflowLogger, get_logger
 from src.workflow.graph import run_agent
 
-
-# Setup CLI-specific logger
-logger = get_logger("cli")
-
-
-@click.group(invoke_without_command=True)
-@click.version_option(version="0.1.0")
-@click.pass_context
-def cli(ctx: click.Context) -> None:
-    """
-    Agentic Coding Assistant CLI.
-
-    A powerful AI-powered coding assistant that helps with code generation,
-    analysis, and project management tasks.
-    """
-    if ctx.invoked_subcommand is None:
-        # Show help if no command provided
-        click.echo(cli.get_help(ctx))
-
-
-@cli.command()
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-@click.option(
-    "--output", "-o", type=click.Path(), help="Save final session result to file"
+# ------------------------------------------------------------------
+# Typer app
+# ------------------------------------------------------------------
+app = typer.Typer(
+    help="🤖 Agentic Coding Assistant CLI.",
+    no_args_is_help=True,
+    rich_markup_mode="markdown",
 )
-def chat(verbose: bool, output: Optional[str]) -> None:
-    """
-    Start an interactive chat session with the agentic coding assistant.
-    """
-    # Configure logging level
+console = Console()
+
+# ------------------------------------------------------------------
+# Static assets
+# ------------------------------------------------------------------
+BANNER = r"""
+[bold magenta]
+┌──────────────────────────────────────────────────┐
+│                                                  │
+│    ██╗   ██╗██╗     ██╗   ██╗███████╗██╗  ██╗    │
+│    ██║   ██║██║     ██║   ██║██╔════╝██║ ██╔╝    │
+│    ██║   ██║██║     ██║   ██║█████╗  █████╔╝     │
+│    ██║   ██║██║     ╚██╗ ██╔╝██╔══╝  ██╔═██╗     │
+│    ╚██████╔╝███████╗ ╚████╔╝ ███████╗██║  ██╗    │
+│     ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝    │
+│                                                  │
+└──────────────────────────────────────────────────┘
+[/bold magenta]
+[dim]A powerful AI-powered coding assistant.[/dim]
+"""
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+def show_banner() -> None:
+    console.print(BANNER)
+    table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
+    table.add_column("Command", style="cyan", no_wrap=True)
+    table.add_column("Description", style="dim")
+    for cmd in app.registered_commands:
+        if cmd.name and cmd.name != "main-callback":
+            desc = (cmd.callback.__doc__ or "").split("\n")[0].strip()
+            table.add_row(cmd.name, desc or "No description")
+    console.print(table)
+    console.print(Rule(style="dim"))
+
+
+def show_markdown(content: str, title: Optional[str] = None) -> None:
+    content = content.strip()
+    md = Markdown(content)
+    console.print(Panel(md, title=title, border_style="blue") if title else md)
+
+
+# ------------------------------------------------------------------
+# Global callback (banner)
+# ------------------------------------------------------------------
+@app.callback(invoke_without_command=True)
+def main_callback() -> None:
+    show_banner()
+
+
+# ------------------------------------------------------------------
+#  CHAT — sticky bottom rounded input
+# ------------------------------------------------------------------
+@app.command()
+def chat(
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o"),
+) -> None:
+    """Start an interactive chat session."""
+    logger = get_logger("cli")
     if verbose:
-        WorkflowLogger.set_level(10)  # DEBUG level
-        logger.info("Verbose logging enabled")
+        WorkflowLogger.set_level(10)
 
-    logger.info("Starting interactive chat session")
+    transcript: list[str] = []
+    kb = KeyBindings()
+    buffer = Buffer(multiline=False)
 
-    click.echo("Agentic Coding Assistant - Interactive Mode")
-    click.echo("Type your requests and I'll help you with coding tasks.")
-    click.echo("Type 'exit' or 'quit' to end the session.")
-    click.echo("-" * 50)
+    # 1. Enter submits
+    @kb.add("enter")
+    def _accept(event) -> None:  # noqa: ARG001
+        event.app.exit(result=buffer.text)
 
-    session_results = []
+    @kb.add("c-c")
+    def _quit(event) -> None:  # noqa: ARG001
+        event.app.exit(result=None)
+
+    # Top scroll area
+    history_win = Window(FormattedTextControl(""), wrap_lines=True)
+
+    # Bottom rounded bar
+    border_top = Window(
+        FormattedTextControl([("class:border", "╭─💬 Type message (Ctrl-C to quit)")]),
+        height=1,
+    )
+    input_line = Window(
+        BufferControl(buffer=buffer),
+        height=1,
+        style="class:input",
+    )
+    border_bottom = Window(
+        FormattedTextControl([("class:border", "╰─▶ ")]),
+        height=1,
+    )
+
+    bottom = HSplit([border_top, input_line, border_bottom], height=3)
+    layout = Layout(HSplit([history_win, bottom]), focused_element=input_line)
+
+    app = Application(
+        layout=layout,
+        key_bindings=kb,
+        full_screen=False,
+        style=Style.from_dict({"border": "bold #00e0ff", "input": "bold #ffffff"}),
+    )
 
     try:
         while True:
-            # Get user input
-            prompt = click.prompt("You", type=str, prompt_suffix=" > ")
-
-            # Check for exit commands
-            if prompt.lower().strip() in ["exit", "quit"]:
+            buffer.text = ""
+            user = app.run()  # waits for Enter
+            user = buffer.text.strip()
+            if not user:
+                continue  # noqa: PLR2004
+            user = user.strip()
+            if user.lower() in {"exit", "quit"}:
                 break
 
-            # Skip empty prompts
-            if not prompt.strip():
-                continue
+            logger.info("User: %s", user)
+            console.print(f"[bold green]You:[/bold green] {user}")
+            transcript.append(f"**User:**\n{user}")
 
-            logger.info("Processing user request: %s", prompt)
+            with Status("[bold green]Thinking…[/bold green]", console=console):
+                answer = asyncio.run(run_agent(user))
 
-            try:
-                # Run the workflow
-                result = asyncio.run(run_agent(prompt))
-                session_results.append(f"## Request\n{prompt}\n\n## Response\n{result}")
-
-                # Display result
-                click.echo("\nAssistant:")
-                click.echo("-" * 20)
-                click.echo(result)
-                click.echo("-" * 20)
-                click.echo()
-
-                logger.info("Request processed successfully")
-
-            except Exception as e:
-                error_msg = f"Error processing request: {e}"
-                logger.error(error_msg, exc_info=True)
-                click.echo(f"\nError: {e}\n", err=True)
+            console.print()
+            console.print(Rule(style="dim"))
+            show_markdown(answer)
+            console.print(Rule(style="dim"))
+            console.print()
+            transcript.append(f"**Assistant:**\n{answer}")
 
     except KeyboardInterrupt:
-        click.echo("\n\nSession interrupted by user.")
-    except Exception as e:
-        logger.error("Chat session error: %s", e, exc_info=True)
-        click.echo(f"\nSession error: {e}", err=True)
+        console.print("\n[yellow]Session interrupted.[/yellow]")
     finally:
-        # Handle session output
-        if output and session_results:
-            try:
-                from pathlib import Path
-
-                final_output = "\n\n".join(session_results)
-                Path(output).write_text(final_output, encoding="utf-8")
-                click.echo(f"\nSession saved to {output}")
-                logger.info("Session saved to %s", output)
-            except Exception as e:
-                logger.error("Failed to save session: %s", e)
-                click.echo(f"\nFailed to save session: {e}", err=True)
-
-        click.echo("\nGoodbye!")
-        logger.info("Chat session ended")
+        if output and transcript:
+            output.write_text("\n\n".join(transcript), encoding="utf-8")
+            console.print(f"\n:white_check_mark: Saved → [link]{output}[/link]")
+        console.print("\n[bold blue]Goodbye! 👋[/bold blue]")
 
 
-@cli.command()
-@click.option(
-    "--format",
-    "-f",
-    type=click.Choice(["mermaid", "png"]),
-    default="mermaid",
-    help="Output format for workflow visualization",
-)
-@click.option("--output", "-o", type=click.Path(), help="Save diagram to file")
-def visualize(format: str, output: Optional[str]) -> None:
-    """
-    Visualize the workflow graph structure.
-    """
-    try:
-        from src.workflow.graph import graph
-
-        if format == "mermaid":
-            diagram = graph.get_graph().draw_mermaid()
-            if output:
-                from pathlib import Path
-
-                Path(output).write_text(diagram, encoding="utf-8")
-                click.echo(f"Mermaid diagram saved to {output}")
-            else:
-                click.echo(diagram)
-        else:  # png
-            try:
-                png_data = graph.get_graph().draw_mermaid_png()
-                if output:
-                    from pathlib import Path
-
-                    Path(output).write_bytes(png_data)
-                    click.echo(f"PNG diagram saved to {output}")
-                else:
-                    click.echo("PNG output requires --output parameter", err=True)
-                    sys.exit(1)
-            except Exception as e:
-                click.echo(f"PNG generation failed (requires pyppeteer): {e}", err=True)
-                sys.exit(1)
-
-    except Exception as e:
-        logger.error("Visualization failed: %s", e, exc_info=True)
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+# ------------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------------
+@app.command(name="config")
+def show_config() -> None:
+    """Display current configuration."""
+    cfg = settings.model_dump()
+    md = "## 🔧 Current Configuration  \n"
+    for k, v in cfg.items():
+        if k.upper().endswith("KEY"):
+            v = "*" * 10 + str(v)[-4:] if str(v) else "*"
+        md += f"- **`{k}`**: `{v}`  \n"
+    show_markdown(md)
 
 
-@cli.command()
-def version() -> None:
-    """
-    Show version information.
-    """
-    click.echo("Agentic Coding Assistant v0.1.0")
-
-
-def main() -> None:
-    """Main entry point."""
-    try:
-        cli()
-    except SystemExit:
-        raise
-    except Exception as e:
-        logger = get_logger("cli")
-        logger.error("CLI error: %s", e, exc_info=True)
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-
+# ------------------------------------------------------------------
 if __name__ == "__main__":
-    main()
+    app()

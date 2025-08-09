@@ -23,6 +23,7 @@ dependencies = [
     "rich-click>=1.8.9",
     "ripgrepy>=2.2.0",
     "sentence-transformers>=5.0.0",
+    "typer>=0.16.0",
 ]
 
 [project.scripts]
