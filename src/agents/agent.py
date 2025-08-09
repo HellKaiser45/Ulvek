@@ -45,19 +45,17 @@ async def run_agent_safe(
     prompt: str | list[str],
     message_history: list[dict[str, str]] | None = None,
     retries: int = 3,
+    deps: AgentDepsT | None = None,
     **kwargs,
 ) -> AgentRunResult[AgentOutputT]:
     for attempt in range(retries):
         with capture_run_messages() as messages:
             try:
+                if deps:
+                    kwargs["deps"] = deps
                 if message_history:
-                    result = await agent.run(
-                        prompt,
-                        message_history=message_history,  # type: ignore
-                        **kwargs,
-                    )
-                else:
-                    result = await agent.run(prompt, **kwargs)
+                    kwargs["message_history"] = message_history
+                result = await agent.run(prompt, **kwargs)
                 return result
             except UnexpectedModelBehavior as error:
                 logger.error(f"Unexpected model behavior error: {error}")
