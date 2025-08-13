@@ -5,7 +5,7 @@ from chonkie import (
     RecursiveRules,
     RecursiveChunker,
 )
-from src.config import settings, tokenizer
+from src.app.config import settings, tokenizer
 from tokenizers import Tokenizer
 from itertools import chain
 from operator import attrgetter
@@ -113,7 +113,6 @@ def format_chunks_for_memory(
     chunks: list[str], role: str = "user"
 ) -> list[dict[str, str]]:
     """Convert chunk objects to OpenAI message format for Mem0 (sequential)"""
-    print(f"Starting format_chunks_for_memory with {len(chunks)} chunks")
 
     messages = [{"role": role, "content": chunk} for chunk in chunks]
 

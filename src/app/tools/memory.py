@@ -1,4 +1,4 @@
-from src.config import config
+from src.app.config import config
 from mem0 import Memory
 import time
 from pydantic import BaseModel, Field

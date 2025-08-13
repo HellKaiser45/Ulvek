@@ -10,7 +10,7 @@ import os
 import logging
 from pathlib import Path
 
-from src.utils.logger import get_logger
+from src.app.utils.logger import get_logger
 
 # Setup module-specific logger
 logger = get_logger(__name__)

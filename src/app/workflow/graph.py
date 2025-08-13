@@ -1,10 +1,12 @@
 from __future__ import annotations
+import asyncio
 
 from pydantic import BaseModel
 from typing import Literal
+import uuid
+import json
 from langgraph.graph import START, END, StateGraph
-from langgraph.checkpoint.memory import InMemorySaver
-from src.agents.agent import (
+from src.app.agents.agent import (
     orchestrator_agent,
     coding_agent,
     evaluator_agent,
@@ -13,14 +15,14 @@ from src.agents.agent import (
     task_classification_agent,
     run_agent_safe,
 )
-from src.agents.schemas import ExecutionStep, Route
-from src.tools.codebase import process_file, get_non_ignored_files
+from src.app.agents.schemas import ExecutionStep, Route, AgentDeps
+from src.app.tools.codebase import process_file, get_non_ignored_files
 from langchain_core.messages import HumanMessage, AIMessage, AnyMessage
-from src.utils.converters import langchain_to_pydantic, token_count
-from src.utils.logger import get_logger
+from src.app.utils.converters import langchain_to_pydantic, token_count
+from src.app.utils.logger import get_logger
 
+from langchain_core.runnables.config import RunnableConfig
 
-checkpointer = InMemorySaver()
 logger = get_logger(__name__)
 
 
@@ -52,6 +54,9 @@ class PlannerState(BaseModel):
     messages_buffer: list[AnyMessage] = []
 
 
+# --------------------------State nodes------------------------------
+
+
 # ------------------------------------------------------------------
 # 2. Utility: static snapshot
 # ------------------------------------------------------------------
@@ -71,7 +76,9 @@ def feedback_router(state: FeedbackState) -> Literal[Route.CODE, Route.END]:
 # ---------------------------subgraphs nodes------------------------
 
 
-async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
+async def worker_feedback_subgraph_start(
+    state: WrapperState | PlannerState, config: RunnableConfig
+):
     logger.debug("Worker feedback subgraph start")
 
     if isinstance(state, WrapperState):
@@ -80,7 +87,7 @@ async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
             static_ctx=state.ctx,
         )
         logger.debug(f"Worker feedback subgraph start: {worker_state}")
-        start_worker_graph = await worker_feedback_subgraph.ainvoke(worker_state)
+        start_worker_graph = worker_feedback_subgraph.invoke(worker_state)
         parse_worker_graph = FeedbackState(**start_worker_graph)
 
         proper_output = f"""
@@ -117,13 +124,15 @@ async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
                 messages_buffer=[HumanMessage(init_messate)],
                 id=task.task_id,
             )
-            start_worker_graph = await worker_feedback_subgraph.ainvoke(worker_state)
+            start_worker_graph = await worker_feedback_subgraph.ainvoke(
+                worker_state, config=config
+            )
             parse_worker_graph = FeedbackState(**start_worker_graph)
 
             proper_output = f"""
                 For the task {task.task_id}, here is an overview of the changes I made:
 
-                {parse_worker_graph.messages_buffer[-1]}
+                {parse_worker_graph.messages_buffer[-1].content}
                 ---
                 """
             gathered_work_done += proper_output + "\n"
@@ -132,12 +141,12 @@ async def worker_feedback_subgraph_start(state: WrapperState | PlannerState):
         }
 
 
-async def heavy_subgraph_start(state: WrapperState):
+async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
     heavy_state = PlannerState(
         gathered_context=state.ctx,
         messages_buffer=[state.messages_buffer[-1]],
     )
-    heavy_graph = await heavy_subgraph.ainvoke(heavy_state)
+    heavy_graph = await heavy_subgraph.ainvoke(heavy_state, config=config)
     parse_heavy_graph = PlannerState(**heavy_graph)
 
     return {
@@ -147,7 +156,7 @@ async def heavy_subgraph_start(state: WrapperState):
 
 
 # ----------------------------nodes---------------------------------
-async def give_feedback_node(state: FeedbackState):
+async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
     prompt_construction = f"""
     The task to be done and evaluate is:
     {state.messages_buffer[0].content}
@@ -160,7 +169,11 @@ async def give_feedback_node(state: FeedbackState):
 
     logger.debug(f"Evaluator of {tokens} tokens for {prompt_construction}")
 
-    eval = (await run_agent_safe(evaluator_agent, prompt_construction)).output
+    eval = await run_agent_safe(
+        evaluator_agent,
+        prompt_construction,
+        deps=AgentDeps(run_id=str(config.get("run_id", uuid.uuid4().hex))),
+    )
 
     if eval.grade == "pass":
         return {"messages_buffer": state.messages_buffer}
@@ -193,18 +206,19 @@ async def give_feedback_node(state: FeedbackState):
 
 
 async def router_node(
-    state: WrapperState,
+    state: WrapperState, config: RunnableConfig
 ) -> Literal[Route.CHAT, Route.CONTEXT, Route.PLAN, Route.CODE]:
     logger.debug(f"Task classification agent for {state.messages_buffer[-1].content}")
-    e = (
-        await run_agent_safe(
-            task_classification_agent, str(state.messages_buffer[-1].content)
-        )
-    ).output
+
+    e = await run_agent_safe(
+        task_classification_agent,
+        str(state.messages_buffer[-1].content),
+        deps=AgentDeps(run_id=str(config.get("run_id", uuid.uuid4().hex))),
+    )
     return e.task_type
 
 
-async def worker_node(state: FeedbackState):
+async def worker_node(state: FeedbackState, config: RunnableConfig):
     openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
     prompt = f"""
     ## Context to keep in mind
@@ -221,14 +235,17 @@ async def worker_node(state: FeedbackState):
     tokens = token_count(prompt)
 
     logger.debug(f"Coding agent of {tokens} agent for {prompt}")
-    worker_call = (
-        await run_agent_safe(coding_agent, prompt, message_history=openai_dicts)
-    ).output
+
+    worker_call = await run_agent_safe(
+        coding_agent,
+        prompt,
+        message_history=openai_dicts,
+        deps=AgentDeps(run_id=str(config.get("run_id", uuid.uuid4().hex))),
+    )
 
     file_details_parts = []
-    if worker_call.files_edited:  # Check if the list exists and is not None/empty
+    if worker_call.files_edited:
         for file_edit in worker_call.files_edited:
-            # Handle potential None values safely using 'or'
             operation = file_edit.operation_type or "unknown"
             path = file_edit.file_path or "not specified"
             diff_content = file_edit.diff or "No diff available."
@@ -238,9 +255,7 @@ async def worker_node(state: FeedbackState):
     else:
         file_details_parts.append("No files were edited.")
 
-    file_details_str = "\n\n---\n\n".join(
-        file_details_parts
-    )  # Separating each file's details
+    file_details_str = "\n\n---\n\n".join(file_details_parts)
 
     structured_output = f"""
     ## Summary of the changes I made:
@@ -270,7 +285,7 @@ async def worker_node(state: FeedbackState):
     }
 
 
-async def context_node(state: WrapperState):
+async def context_node(state: WrapperState, config: RunnableConfig):
     openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
     prompt = f"""
     ## Context gathered so far
@@ -284,11 +299,13 @@ async def context_node(state: WrapperState):
     tokens = token_count(prompt)
 
     logger.debug(f"Context retriever agent of {tokens} agent for {prompt}")
-    context_call = (
-        await run_agent_safe(
-            context_retriever_agent, prompt, message_history=openai_dicts
-        )
-    ).output
+
+    context_call = await run_agent_safe(
+        context_retriever_agent,
+        prompt,
+        message_history=openai_dicts,
+        deps=AgentDeps(run_id=str(config.get("run_id", uuid.uuid4().hex))),
+    )
     code_snippets_structured = ""
     for code_snippet in context_call.code_snippets:
         if code_snippet.source == "documentation":
@@ -381,7 +398,7 @@ async def context_node(state: WrapperState):
     }
 
 
-async def plan_node(state: PlannerState):
+async def plan_node(state: PlannerState, config: RunnableConfig):
     openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
     prompt = f"""
     ## Context gathered so far
@@ -394,13 +411,17 @@ async def plan_node(state: PlannerState):
     """
     tokens = token_count(prompt)
     logger.debug(f"plan retriever agent of {tokens} tokens for prompt: {prompt}")
-    plan_call = (
-        await run_agent_safe(orchestrator_agent, prompt, message_history=openai_dicts)
-    ).output
+
+    plan_call = await run_agent_safe(
+        orchestrator_agent,
+        prompt,
+        message_history=openai_dicts,
+        deps=AgentDeps(run_id=str(config.get("run_id", uuid.uuid4().hex))),
+    )
     return {"tasks": plan_call.steps}
 
 
-async def chat_node(state: WrapperState):
+async def chat_node(state: WrapperState, config: RunnableConfig):
     openai_dicts = langchain_to_pydantic(state.messages_buffer[:-1])
     prompt = f"""
     ## Context to keep in mind
@@ -408,12 +429,16 @@ async def chat_node(state: WrapperState):
     --- 
     {state.messages_buffer[-1].content}
     """
-    logger.info(f"Chat: {prompt}")
+    logger.info(f"Chat: {prompt[:100]}...")
     tokens = token_count(prompt)
     logger.debug(f"chat retriever agent of {tokens} tokens for prompt: {prompt}")
-    chat_call = (
-        await run_agent_safe(conversational_agent, prompt, message_history=openai_dicts)
-    ).output
+
+    chat_call = await run_agent_safe(
+        conversational_agent,
+        prompt,
+        message_history=openai_dicts,
+        deps=AgentDeps(run_id=str(config.get("run_id", uuid.uuid4().hex))),
+    )
 
     return {
         "messages_buffer": state.messages_buffer + [AIMessage(chat_call)],
@@ -451,7 +476,10 @@ worker_feedback_subgraph = (
 heavy_subgraph = (
     StateGraph(PlannerState)
     .add_node(Route.PLAN, plan_node)
-    .add_node(Route.CODE, worker_feedback_subgraph_start)
+    .add_node(
+        Route.CODE,
+        worker_feedback_subgraph_start,
+    )
     .add_edge(START, Route.PLAN)
     .add_edge(Route.PLAN, Route.CODE)
     .add_edge(Route.CODE, END)
@@ -463,16 +491,48 @@ heavy_subgraph = (
 # ------------------------------------------------------------------
 
 
-async def run_agent(prompt: str) -> str:
-    initial: WrapperState = WrapperState(
-        messages_buffer=[HumanMessage(prompt)],
-        ctx=f"""
-### Project structure:
-{await build_static()}
-    ---
-    """,
+async def run_main_graph(prompt: str, conversation_id: uuid.UUID) -> None:
+    from src.app.utils.frontends_adapters.interaction_manager import (
+        encode_event,
+        emit_text_message_start,
+        emit_text_message_content,
+        emit_text_message_end,
+        send_event,
     )
-    out = await wrapper_graph.ainvoke(initial)
-    parsed_out = WrapperState(**out)
 
-    return str(parsed_out.messages_buffer[-1].content)
+    try:
+        initial_state: WrapperState = WrapperState(
+            messages_buffer=[HumanMessage(content=prompt)],
+            ctx=f"""
+### Project structure:  
+{await build_static()}
+---
+            """,
+        )
+        config: RunnableConfig = {
+            "run_id": conversation_id,
+        }
+
+        async for streamed_item in wrapper_graph.astream(
+            initial_state,
+            config=config,
+            stream_mode="messages",
+            subgraphs=True,
+        ):
+            logger.info(f"Streamed item: {streamed_item}")
+            namespace, (message, metadata) = streamed_item
+
+            ev_start, masg_id = emit_text_message_start()
+            await send_event(conversation_id.hex, encode_event(ev_start))
+            ev_content = emit_text_message_content(masg_id, message)
+            await send_event(conversation_id.hex, encode_event(ev_content))
+            ev_end = emit_text_message_end(masg_id)
+            await send_event(conversation_id.hex, encode_event(ev_end))
+
+    except Exception as e:
+        logger.error(f"Error in graph: {e}")
+        event = {"type": "error", "message": str(e)}
+
+        await send_event(conversation_id.hex, json.dumps(event))
+        await asyncio.sleep(1)
+        raise e

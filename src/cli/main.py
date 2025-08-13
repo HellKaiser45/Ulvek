@@ -1,195 +1,108 @@
-# src/cli/main.py
-from __future__ import annotations
-
+# minimal_cli_with_httpx_sse.py
 import asyncio
-from pathlib import Path
+import httpx
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
 from typing import Optional
 
-import typer
-from prompt_toolkit.application import Application
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.styles import Style
-from prompt_toolkit.history import InMemoryHistory
+# --- Import httpx-sse ---
+from httpx_sse import (
+    aconnect_sse,
+    ServerSentEvent,
+)  # Import ServerSentEvent for type hints if needed
+import json
 
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.status import Status
-from rich.table import Table
-from rich import box
+# --- Configuration ---
+DEFAULT_BASE_URL = "http://localhost:8000"
 
-from src.config import settings
-from src.utils.logger import WorkflowLogger, get_logger
-from src.workflow.graph import run_agent
-
-# ------------------------------------------------------------------
-# Typer app
-# ------------------------------------------------------------------
-app = typer.Typer(
-    help="🤖 Agentic Coding Assistant CLI.",
-    no_args_is_help=True,
-    rich_markup_mode="markdown",
-)
+# --- Rich Console ---
 console = Console()
 
-# ------------------------------------------------------------------
-# Static assets
-# ------------------------------------------------------------------
-BANNER = r"""
-[bold magenta]
-┌──────────────────────────────────────────────────┐
-│                                                  │
-│    ██╗   ██╗██╗     ██╗   ██╗███████╗██╗  ██╗    │
-│    ██║   ██║██║     ██║   ██║██╔════╝██║ ██╔╝    │
-│    ██║   ██║██║     ██║   ██║█████╗  █████╔╝     │
-│    ██║   ██║██║     ╚██╗ ██╔╝██╔══╝  ██╔═██╗     │
-│    ╚██████╔╝███████╗ ╚████╔╝ ███████╗██║  ██╗    │
-│     ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝    │
-│                                                  │
-└──────────────────────────────────────────────────┘
-[/bold magenta]
-[dim]A powerful AI-powered coding assistant.[/dim]
-"""
+# --- Typer App ---
+app = typer.Typer(help="Minimal Ulvek API CLI with httpx-sse", no_args_is_help=True)
+
+# --- Simplified Core Logic using httpx-sse ---
 
 
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-def show_banner() -> None:
-    console.print(BANNER)
-    table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
-    table.add_column("Command", style="cyan", no_wrap=True)
-    table.add_column("Description", style="dim")
-    for cmd in app.registered_commands:
-        if cmd.name and cmd.name != "main-callback":
-            desc = (cmd.callback.__doc__ or "").split("\n")[0].strip()
-            table.add_row(cmd.name, desc or "No description")
-    console.print(table)
-    console.print(Rule(style="dim"))
+async def simple_stream_and_respond(conv_id: str, base_url: str):
+    """Connects to the SSE stream using httpx-sse and displays basic events."""
+    stream_url = f"{base_url}/stream/{conv_id}"
+    answer_url = f"{base_url}/answer/{conv_id}"
+
+    timeout = httpx.Timeout(3870.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        # Use aconnect_sse context manager
+        async with aconnect_sse(client, "GET", stream_url) as event_source:
+            # Iterate over ServerSentEvent objects
+            async for sse in event_source.aiter_sse():
+                # Access event fields directly
+                # sse.event, sse.data, sse.id, sse.retry are available
+                event_type = "message"  # Default SSE event type, adapt if your backend sends custom 'event:' field
+                event_name = sse.event  # Use the SSE event type field
+                # Parse data if it's JSON (assuming your events are JSON)
+                try:
+                    event_value = json.loads(sse.data) if sse.data else {}
+                except json.JSONDecodeError:
+                    event_value = {"raw_data": sse.data}  # Fallback if data isn't JSON
+
+                # --- Process Events (same logic as before, but cleaner data access) ---
+                if (
+                    event_name == "displayMessage"
+                ):  # Adjust condition based on your events
+                    # Assuming event_value is the dict you sent, e.g., {"text": "..."}
+                    message_text = event_value.get("text", "No text received")
+                    console.print(Panel(f"[blue]{message_text}[/blue]", title="Agent"))
+
+                elif event_name == "requestUserInput":  # Adjust condition
+                    user_input = Prompt.ask("[bold yellow]Your input[/bold yellow]")
+                    answer_body = {
+                        "type": "custom",  # Adjust based on your backend expectation
+                        "name": "userInput",
+                        "value": {"text": user_input},
+                    }
+                    await client.post(answer_url, json=answer_body)
+                    console.print("[dim]Answer sent.[/dim]")
+
+                elif event_name == "workflowComplete":  # Adjust condition
+                    console.print("[bold green]Done![/bold green]")
+                    return
+                # Add other event handlers as needed
 
 
-def show_markdown(content: str, title: Optional[str] = None) -> None:
-    content = content.strip()
-    md = Markdown(content)
-    console.print(Panel(md, title=title, border_style="blue") if title else md)
+async def simple_run_conversation(prompt: str, base_url: str):
+    """Starts a conversation and manages the streaming loop."""
+    # Pass the prompt as a query parameter using 'params'
+    start_url = f"{base_url}/start"
+    params = {"prompt": prompt}  # <-- Create a dictionary for query parameters
+    timeout = httpx.Timeout(3870.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        # Pass 'params=params' instead of 'json=...'
+        start_response = await client.post(start_url, params=params)  # <-- Use 'params'
+        start_response.raise_for_status()
+        start_data = start_response.json()
+        conv_id = start_data["conversation_id"]
+        console.print(f"[green]Started conversation ID: {conv_id}[/green]")
+
+        await simple_stream_and_respond(conv_id, base_url)
 
 
-# ------------------------------------------------------------------
-# Global callback (banner)
-# ------------------------------------------------------------------
-@app.callback(invoke_without_command=True)
-def main_callback() -> None:
-    show_banner()
-
-
-# ------------------------------------------------------------------
-#  CHAT — sticky bottom rounded input
-# ------------------------------------------------------------------
+# --- Minimal Typer Command ---
 @app.command()
 def chat(
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o"),
-) -> None:
-    """Start an interactive chat session."""
-    logger = get_logger("cli")
-    if verbose:
-        WorkflowLogger.set_level(10)
-
-    transcript: list[str] = []
-    kb = KeyBindings()
-    buffer = Buffer(multiline=False)
-
-    # 1. Enter submits
-    @kb.add("enter")
-    def _accept(event) -> None:  # noqa: ARG001
-        event.app.exit(result=buffer.text)
-
-    @kb.add("c-c")
-    def _quit(event) -> None:  # noqa: ARG001
-        event.app.exit(result=None)
-
-    # Top scroll area
-    history_win = Window(FormattedTextControl(""), wrap_lines=True)
-
-    # Bottom rounded bar
-    border_top = Window(
-        FormattedTextControl([("class:border", "╭─💬 Type message (Ctrl-C to quit)")]),
-        height=1,
-    )
-    input_line = Window(
-        BufferControl(buffer=buffer),
-        height=1,
-        style="class:input",
-    )
-    border_bottom = Window(
-        FormattedTextControl([("class:border", "╰─▶ ")]),
-        height=1,
-    )
-
-    bottom = HSplit([border_top, input_line, border_bottom], height=3)
-    layout = Layout(HSplit([history_win, bottom]), focused_element=input_line)
-
-    app = Application(
-        layout=layout,
-        key_bindings=kb,
-        full_screen=False,
-        style=Style.from_dict({"border": "bold #00e0ff", "input": "bold #ffffff"}),
-    )
-
-    try:
-        while True:
-            buffer.text = ""
-            user = app.run()  # waits for Enter
-            user = buffer.text.strip()
-            if not user:
-                continue  # noqa: PLR2004
-            user = user.strip()
-            if user.lower() in {"exit", "quit"}:
-                break
-
-            logger.info("User: %s", user)
-            console.print(f"[bold green]You:[/bold green] {user}")
-            transcript.append(f"**User:**\n{user}")
-
-            with Status("[bold green]Thinking…[/bold green]", console=console):
-                answer = asyncio.run(run_agent(user))
-
-            console.print()
-            console.print(Rule(style="dim"))
-            show_markdown(answer)
-            console.print(Rule(style="dim"))
-            console.print()
-            transcript.append(f"**Assistant:**\n{answer}")
-
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Session interrupted.[/yellow]")
-    finally:
-        if output and transcript:
-            output.write_text("\n\n".join(transcript), encoding="utf-8")
-            console.print(f"\n:white_check_mark: Saved → [link]{output}[/link]")
-        console.print("\n[bold blue]Goodbye! 👋[/bold blue]")
+    prompt: str = typer.Argument(..., help="The initial prompt."),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url", "-u", help="API base URL."
+    ),
+):
+    """Start a conversation."""
+    resolved_base_url = base_url or DEFAULT_BASE_URL
+    asyncio.run(simple_run_conversation(prompt, resolved_base_url))
 
 
-# ------------------------------------------------------------------
-# CONFIG
-# ------------------------------------------------------------------
-@app.command(name="config")
-def show_config() -> None:
-    """Display current configuration."""
-    cfg = settings.model_dump()
-    md = "## 🔧 Current Configuration  \n"
-    for k, v in cfg.items():
-        if k.upper().endswith("KEY"):
-            v = "*" * 10 + str(v)[-4:] if str(v) else "*"
-        md += f"- **`{k}`**: `{v}`  \n"
-    show_markdown(md)
-
-
-# ------------------------------------------------------------------
+# --- Entry Point ---
 if __name__ == "__main__":
     app()

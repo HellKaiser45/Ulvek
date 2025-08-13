@@ -67,7 +67,7 @@ def get_logger(name: str = "workflow", level: int = logging.INFO) -> logging.Log
     Convenience function to get a configured logger.
 
     Usage:
-        from src.utils.logger import get_logger
+        from src.app.utils.logger import get_logger
         logger = get_logger(__name__)
     """
     return WorkflowLogger.get_logger(name, level)

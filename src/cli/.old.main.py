@@ -8,8 +8,8 @@ from typing import Optional
 
 import rich_click as click
 
-from src.utils.logger import get_logger, WorkflowLogger
-from src.workflow.graph import run_agent
+from src.app.utils.logger import get_logger, WorkflowLogger
+from src.app.workflow.graph import run_agent
 
 
 # Setup CLI-specific logger
@@ -125,7 +125,7 @@ def visualize(format: str, output: Optional[str]) -> None:
     Visualize the workflow graph structure.
     """
     try:
-        from src.workflow.graph import graph
+        from src.app.workflow.graph import graph
 
         if format == "mermaid":
             diagram = graph.get_graph().draw_mermaid()

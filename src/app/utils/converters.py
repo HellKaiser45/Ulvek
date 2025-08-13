@@ -1,5 +1,5 @@
 from langchain_core.messages.utils import convert_to_openai_messages, AnyMessage
-from src.config import tokenizer
+from src.app.config import tokenizer
 from typing import Sequence
 
 

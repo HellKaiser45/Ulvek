@@ -1,7 +1,6 @@
 import aiofiles
 from pydantic import BaseModel
 import os
-import asyncio
 from magika import Magika
 from pathspec import PathSpec
 from pathspec.patterns.gitwildmatch import GitWildMatchPattern
@@ -83,13 +82,3 @@ async def process_file(file_paths: list[str]) -> list[FileAnalysis]:
         )
         for result in m.identify_paths(file_paths)
     ]
-
-
-async def process_non_ignored_files() -> list[FileAnalysis]:
-    """Process all non-ignored files in `file_path`"""
-    return await process_file(await get_non_ignored_files())
-
-
-if __name__ == "__main__":
-    files = asyncio.run(process_non_ignored_files())
-    print(files)

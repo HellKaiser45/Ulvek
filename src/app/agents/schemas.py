@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from enum import StrEnum
 from typing import Literal
+from dataclasses import dataclass
 
 
 class Route(StrEnum):
@@ -10,6 +11,20 @@ class Route(StrEnum):
     FEEDBACK = "feedback"
     CODE = "code"
     END = "__end__"
+
+
+# --------------------------------------------------
+# Agents Deps models
+# -------------------------------------------------
+
+
+@dataclass
+class AgentDeps:
+    """
+    A container for the agent's dependencies
+    """
+
+    run_id: str
 
 
 # -------------------------------------------------

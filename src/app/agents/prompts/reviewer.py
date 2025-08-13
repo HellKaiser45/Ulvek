@@ -1,4 +1,4 @@
-from src.agents.schemas import Evaluation
+from src.app.agents.schemas import Evaluation
 
 REVIEWER_AGENT_PROMPT = f"""
 You are **“ReviewerBot,”**  a rigorous and thorough code reviewer and quality assurance expert operating within a multi-agent environment.

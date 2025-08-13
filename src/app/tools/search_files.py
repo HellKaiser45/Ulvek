@@ -1,14 +1,14 @@
 from ripgrepy import Ripgrepy
 from pathlib import Path
 from pydantic import BaseModel, field_validator, Field, TypeAdapter
-from typing import Any, Optional, Tuple
-from src.tools.codebase import process_file, FileAnalysis
-from src.tools.chunkers import (
+from typing import Any, Optional
+from src.app.tools.codebase import process_file, FileAnalysis
+from src.app.tools.chunkers import (
     format_chunks_for_memory,
     chunk_text_on_demand,
     chunk_code_on_demand,
 )
-from src.tools.memory import process_multiple_messages_with_temp_memory
+from src.app.tools.memory import process_multiple_messages_with_temp_memory
 
 
 class MatchText(BaseModel):
@@ -104,87 +104,6 @@ class Search_file_request(BaseModel):
     )
 
 
-async def search_files(searchquery: Search_file_request) -> list[SearchContent]:
-    """
-    End-to-end “smart search” over the current workspace.
-
-    What the function does
-    ----------------------
-    1. Runs **ripgrep** with the options supplied in
-       `searchquery.ripgrep_request`, returning every matching line.
-    2. De-duplicates the files that contain at least one hit and
-       asynchronously analyses them (`process_file`) to obtain
-       language, file type, etc.
-    3. Reads the full content of each file and chunks it:
-       - code → language-aware chunks
-       - plain text → simple text chunks
-    4. Sends the chunks to an LLM together with the prompt
-       `searchquery.ask_docs`, performing a **RAG retrieval** that
-       returns the most relevant snippets.
-    5. Extracts the **enclosing syntactic block** (class / function /
-       markdown section, etc.) that contains the hit line.
-    6. Returns a list of `SearchContent` objects, one per **match**,
-       that combine:
-
-       - the original ripgrep hit (file path, line number, line text)
-       - file-level metadata (language, file type, …)
-       - the RAG-selected snippets (`content_rag_result`)
-       - the enclosing block (`content_extract`)
-
-
-    Returns
-    -------
-    list[SearchContent]
-        One entry per **matching line** returned by ripgrep, enriched
-        with RAG results and enclosing context.
-
-
-    """
-    matches = _get_ripgrep_matches(searchquery.ripgrep_request)
-    results_paths = {match.data.path.text for match in matches}
-    files_analysis = await process_file(list(results_paths))
-
-    validated_files = [
-        SearchResult(
-            **fa.model_dump(),
-            line_number=int(match.data.line_number),
-            line_content=match.data.lines.text,
-        )
-        for match, fa in zip(matches, files_analysis)
-    ]
-    search_results = []
-    for file in validated_files:
-        text = Path(file.file_path).read_text()
-
-        if file.group == "code":
-            print(f"Processing code file at {file.file_path}")
-            chunks = format_chunks_for_memory(
-                chunk_code_on_demand(text, language=file.file_type)
-            )
-        else:
-            print(f"Processing text file at {file.file_path}")
-            chunks = format_chunks_for_memory(chunk_text_on_demand(text))
-
-        # Process memory (RAG results)
-        memory = process_multiple_messages_with_temp_memory(
-            chunks, searchquery.ask_docs
-        )
-
-        # Extract surrounding content
-        content = enclosing_block(file.file_path, file.line_number)
-
-        # Create SearchContent object
-        search_results.append(
-            SearchContent(
-                **file.model_dump(),  # Inherits all SearchResult fields
-                content_rag_result=memory,  # List[str] from RAG
-                content_extract=content,  # str from enclosing_block
-            )
-        )
-
-    return search_results
-
-
 def _get_ripgrep_matches(req: RipgrepSearchRequest):
     root = Path.cwd().resolve()
     rg = Ripgrepy(req.query, str(root)).line_number().json()
@@ -250,6 +169,85 @@ def enclosing_block(
         chars_count += len(lines[end])
         end += 1
         line_count += 1
-    print("".join(lines[start:end]))
 
     return "".join(lines[start:end])
+
+
+# ---------------------------Public Tools--------------------------------
+async def search_files(searchquery: Search_file_request) -> list[SearchContent]:
+    """
+    End-to-end “smart search” over the current workspace.
+
+    What the function does
+    ----------------------
+    1. Runs **ripgrep** with the options supplied in
+       `searchquery.ripgrep_request`, returning every matching line.
+    2. De-duplicates the files that contain at least one hit and
+       asynchronously analyses them (`process_file`) to obtain
+       language, file type, etc.
+    3. Reads the full content of each file and chunks it:
+       - code → language-aware chunks
+       - plain text → simple text chunks
+    4. Sends the chunks to an LLM together with the prompt
+       `searchquery.ask_docs`, performing a **RAG retrieval** that
+       returns the most relevant snippets.
+    5. Extracts the **enclosing syntactic block** (class / function /
+       markdown section, etc.) that contains the hit line.
+    6. Returns a list of `SearchContent` objects, one per **match**,
+       that combine:
+
+       - the original ripgrep hit (file path, line number, line text)
+       - file-level metadata (language, file type, …)
+       - the RAG-selected snippets (`content_rag_result`)
+       - the enclosing block (`content_extract`)
+
+
+    Returns
+    -------
+    list[SearchContent]
+        One entry per **matching line** returned by ripgrep, enriched
+        with RAG results and enclosing context.
+
+
+    """
+    matches = _get_ripgrep_matches(searchquery.ripgrep_request)
+    results_paths = {match.data.path.text for match in matches}
+    files_analysis = await process_file(list(results_paths))
+
+    validated_files = [
+        SearchResult(
+            **fa.model_dump(),
+            line_number=int(match.data.line_number),
+            line_content=match.data.lines.text,
+        )
+        for match, fa in zip(matches, files_analysis)
+    ]
+    search_results = []
+    for file in validated_files:
+        text = Path(file.file_path).read_text()
+
+        if file.group == "code":
+            chunks = format_chunks_for_memory(
+                chunk_code_on_demand(text, language=file.file_type)
+            )
+        else:
+            chunks = format_chunks_for_memory(chunk_text_on_demand(text))
+
+        # Process memory (RAG results)
+        memory = process_multiple_messages_with_temp_memory(
+            chunks, searchquery.ask_docs
+        )
+
+        # Extract surrounding content
+        content = enclosing_block(file.file_path, file.line_number)
+
+        # Create SearchContent object
+        search_results.append(
+            SearchContent(
+                **file.model_dump(),  # Inherits all SearchResult fields
+                content_rag_result=memory,  # List[str] from RAG
+                content_extract=content,  # str from enclosing_block
+            )
+        )
+
+    return search_results

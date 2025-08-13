@@ -1,4 +1,4 @@
-from src.agents.schemas import Route
+from src.app.agents.schemas import Route
 
 CLASSIFIER_AGENT_PROMPT = f"""
 You are an intelligent request classifier operating within a multi-agent system. You must return valid JSON matching the classification schema exactly.
