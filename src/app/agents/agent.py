@@ -1,20 +1,12 @@
 from pydantic_ai import Agent, Tool
-from typing import TypeVar, Any, cast, Sequence, AsyncGenerator
-from pydantic_ai.messages import (
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPartDelta,
-    ToolCallPartDelta,
-)
+from typing import TypeVar, Any, cast, AsyncGenerator
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModel
 import asyncio
 from dataclasses import dataclass
 from ..config import settings
-from src.app.tools.interactive_tools import gather_docs_context, prompt_user
+from src.app.tools.interactive_tools import gather_docs_context
 from src.app.tools.search_files import search_files
 from src.app.utils.logger import get_logger
 from src.app.agents.prompts.chat import CONVERSATIONAL_AGENT_PROMPT
@@ -29,7 +21,6 @@ from src.app.agents.schemas import (
     ProjectPlan,
     AssembledContext,
     TaskType,
-    AgentDeps,
 )
 
 logger = get_logger(__name__)
@@ -77,7 +68,7 @@ AgentOutputT = TypeVar("AgentOutputT")
 async def run_agent_with_events(
     agent: Agent[AgentDepsT, AgentOutputT],
     prompt: str,
-    message_history: Sequence[dict[str, str]] | None = None,
+    message_history: list[ModelMessage] | None = None,
     retries: int = 3,
     deps: AgentDepsT | None = None,
 ) -> AsyncGenerator[AgentExecutionEvent | AgentResult | AgentOutputT | Any]:
@@ -117,10 +108,10 @@ async def run_agent_with_events(
             iter_kwargs: dict[str, Any] = {}
             if deps is not None:
                 iter_kwargs["deps"] = deps
-            if message_history:
-                iter_kwargs["message_history"] = message_history
 
-            async with agent.iter(prompt, **iter_kwargs) as run:
+            async with agent.iter(
+                prompt, message_history=message_history, **iter_kwargs
+            ) as run:
                 yield run
 
                 async for node in run:
@@ -155,7 +146,6 @@ task_classification_agent = Agent(
     system_prompt=CLASSIFIER_AGENT_PROMPT,
     name="task_classification_agent",
     output_type=TaskType,
-    deps_type=AgentDeps,
 )
 
 evaluator_agent = Agent(
@@ -163,7 +153,6 @@ evaluator_agent = Agent(
     system_prompt=(REVIEWER_AGENT_PROMPT),
     output_type=Evaluation,
     name="evaluator_agent",
-    deps_type=AgentDeps,
 )
 
 coding_agent = Agent(
@@ -171,7 +160,6 @@ coding_agent = Agent(
     system_prompt=(CODING_AGENT_FULL_PROMPT,),
     name="coding_agent",
     output_type=WorkerResult,
-    deps_type=AgentDeps,
     tools=[
         Tool(search_files),
     ],
@@ -181,7 +169,6 @@ orchestrator_agent = Agent(
     model,
     system_prompt=(ORCHESTRATOR_AGENT_PROMPT,),
     output_type=ProjectPlan,
-    deps_type=AgentDeps,
     name="orchestrator_agent",
 )
 
@@ -191,7 +178,6 @@ context_retriever_agent = Agent(
     name="context_gatherer_agent",
     output_type=AssembledContext,
     retries=5,
-    deps_type=AgentDeps,
     tools=[
         Tool(search_files),
         Tool(gather_docs_context),
@@ -201,6 +187,5 @@ context_retriever_agent = Agent(
 conversational_agent = Agent(
     model,
     system_prompt=(CONVERSATIONAL_AGENT_PROMPT),
-    deps_type=AgentDeps,
     name="conversational_agent",
 )

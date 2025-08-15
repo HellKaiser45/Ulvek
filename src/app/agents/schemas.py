@@ -1,9 +1,11 @@
 from pydantic import BaseModel, Field
-from enum import StrEnum
 from typing import Literal
-from dataclasses import dataclass
+from enum import StrEnum
 
 
+# -------------------------------------------------
+# Agents outputs models
+# -------------------------------------------------
 class Route(StrEnum):
     CHAT = "chat"
     CONTEXT = "context"
@@ -11,32 +13,8 @@ class Route(StrEnum):
     FEEDBACK = "feedback"
     CODE = "code"
     USERFEEDBACK = "user_feedback"
+    USER_APPROVAL = "user_approval"
     END = "__end__"
-
-
-class Interraction(StrEnum):
-    APPROVAL = "approval"
-    FEEDBACK = "feedback"
-    INTOOLFEEDBACK = "intool_feedback"
-
-
-# --------------------------------------------------
-# Agents Deps models
-# -------------------------------------------------
-
-
-@dataclass
-class AgentDeps:
-    """
-    A container for the agent's dependencies
-    """
-
-    run_id: str
-
-
-# -------------------------------------------------
-# Agents outputs models
-# -------------------------------------------------
 
 
 # ----------------evaluator_agent-------------------
