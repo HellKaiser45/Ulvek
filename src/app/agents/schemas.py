@@ -10,7 +10,14 @@ class Route(StrEnum):
     PLAN = "plan"
     FEEDBACK = "feedback"
     CODE = "code"
+    USERFEEDBACK = "user_feedback"
     END = "__end__"
+
+
+class Interraction(StrEnum):
+    APPROVAL = "approval"
+    FEEDBACK = "feedback"
+    INTOOLFEEDBACK = "intool_feedback"
 
 
 # --------------------------------------------------
@@ -135,8 +142,8 @@ class WorkerResult(BaseModel):
     summary: str = Field(
         ..., description="A concise summary of all the work done and outcomes"
     )
-    files_edited: list[FileEditOperation] | None = Field(
-        None, description="A list of files modifications performed"
+    files_to_edit: list[FileEditOperation] = Field(
+        default_factory=list, description="A list of files modifications to be applied"
     )
     research_notes: str | None = Field(
         None, description="Free-form notes from a research or information-gathering"

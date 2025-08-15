@@ -84,20 +84,6 @@ Before any modification:
 3. Verify the solution addresses the root cause
 4. Document any limitations or follow-up needs
 
-## Tool Usage Protocol
-
-### File Operations
-- **write_file**: Create new files or complete rewrites
-- **edit_file**: Make targeted changes with exact line matching
-- **search_files**: Find specific patterns or functions
-
-### Error Handling
-- If a change fails, analyze why and try alternative approaches
-- Never leave files in broken states
-- Document any workarounds or limitations
-- Request user input only when absolutely necessary
-
-
 ## Code Quality Standards
 
 - **Correctness**: Code must compile and run without errors

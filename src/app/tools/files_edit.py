@@ -1,22 +1,8 @@
-# filetool.py  –  JSON-safe file tools for Pydantic-AI agents
-from __future__ import annotations
-
 import difflib
 import pathlib
 import textwrap
-import json
 from pathlib import Path
 from pydantic import BaseModel, Field
-from src.app.agents.schemas import AgentDeps
-from pydantic_ai import RunContext
-from src.app.utils.frontends_adapters.interaction_manager import (
-    emit_text_message_start,
-    emit_text_message_content,
-    emit_text_message_end,
-    encode_event,
-    send_event,
-    EVENTS_QUEUE,
-)
 
 
 # ---------- Parameter models (JSON-safe) ------------------------------------
@@ -61,69 +47,8 @@ def _ensure_in_workspace(path: Path) -> None:
         raise ValueError(f"Path must be inside workspace {Path.cwd()}")
 
 
-async def _ask_user_feedback(
-    run_id: str,
-    diff_lines: list[str],
-) -> tuple[bool, str]:
-    """
-    Ask the user via AG-UI for confirmation and optional feedback.
-    Returns (accepted, feedback).
-    """
-    diff_text = "\n".join(diff_lines)
-
-    # 1. Show the diff
-    start_ev, msg_id = emit_text_message_start()
-    await send_event(run_id, encode_event(start_ev))
-    content_ev = emit_text_message_content(msg_id, f"Proposed diff:\n{diff_text}")
-    await send_event(run_id, encode_event(content_ev))
-    end_ev = emit_text_message_end(msg_id)
-    await send_event(run_id, encode_event(end_ev))
-
-    # 2. Ask yes/no
-    request_payload = json.dumps(
-        {
-            "type": "custom",
-            "name": "requestInput",
-            "value": {"prompt": "Apply this change? [y/n] ", "kind": "confirm"},
-        }
-    )
-    await send_event(run_id, request_payload)
-
-    # 3. Wait for answer (same loop as before)
-    while True:
-        rid, raw = await EVENTS_QUEUE.get()
-        if rid != run_id:
-            continue
-        data = json.loads(raw)
-        if data.get("type") == "custom" and data.get("name") == "userInput":
-            choice = str(data.get("value", {}).get("text", "")).strip().lower()
-            if choice in {"y", "yes", "true", "1"}:
-                return True, ""
-
-            # rejected → ask for feedback
-            fb_payload = json.dumps(
-                {
-                    "type": "custom",
-                    "name": "requestInput",
-                    "value": {
-                        "prompt": "❌ Edit rejected. Feedback (Enter for none): ",
-                        "kind": "input",
-                    },
-                }
-            )
-            await send_event(run_id, fb_payload)
-
-            while True:
-                rid2, raw2 = await EVENTS_QUEUE.get()
-                if rid2 != run_id:
-                    continue
-                data2 = json.loads(raw2)
-                if data2.get("type") == "custom" and data2.get("name") == "userInput":
-                    return False, str(data2.get("value", {}).get("text", ""))
-
-
 # ---------- Pydantic-AI tools ------------------------------------------------
-async def write_file(ctx: RunContext[AgentDeps], params: WriteParams) -> str:
+async def write_file(params: WriteParams) -> str:
     """
     Create or overwrite an entire file.
 
@@ -143,32 +68,14 @@ async def write_file(ctx: RunContext[AgentDeps], params: WriteParams) -> str:
         return str(e)
 
     exists = src.exists()
-    original = src.read_text() if exists else ""
     new_content = textwrap.dedent(params.content).lstrip()
-
-    diff_lines = list(
-        difflib.unified_diff(
-            original.splitlines(keepends=True) or [""],
-            new_content.splitlines(keepends=True),
-            fromfile=str(src) if exists else "/dev/null",
-            tofile=str(src),
-            lineterm="",
-        )
-    )
-
-    accepted, feedback = await _ask_user_feedback(ctx.deps.run_id, diff_lines)
-    if not accepted:
-        return (
-            f"Write cancelled. Feedback: {feedback}" if feedback else "Write cancelled."
-        )
-
     tmp = src.with_suffix(src.suffix + ".tmp")
     tmp.write_text(new_content)
     tmp.replace(src)
     return f"{'Overwrote' if exists else 'Created'} {params.file_path}"
 
 
-async def edit_file(ctx: RunContext[AgentDeps], params: EditParams) -> str:
+async def edit_file(params: EditParams) -> str:
     """
     Create or overwrite an entire file.
 
@@ -193,7 +100,6 @@ async def edit_file(ctx: RunContext[AgentDeps], params: EditParams) -> str:
     original = src.read_text()
     search = textwrap.dedent(params.old).strip()
 
-    # locate fragment
     if not search:
         start, end = 0, 0
     else:
@@ -216,22 +122,6 @@ async def edit_file(ctx: RunContext[AgentDeps], params: EditParams) -> str:
     )
     if new_content == original:
         return "No change applied (identical)."
-
-    diff_lines = list(
-        difflib.unified_diff(
-            original.splitlines(keepends=True),
-            new_content.splitlines(keepends=True),
-            fromfile=str(src),
-            tofile=str(src),
-            lineterm="",
-        )
-    )
-
-    accepted, feedback = await _ask_user_feedback(ctx.deps.run_id, diff_lines)
-    if not accepted:
-        return (
-            f"Edit cancelled. Feedback: {feedback}" if feedback else "Edit cancelled."
-        )
 
     tmp = src.with_suffix(src.suffix + ".tmp")
     tmp.write_text(new_content)
