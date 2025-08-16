@@ -1,10 +1,9 @@
 from src.app.workflow.types import (
     PlannerState,
-    Route,
-    Interraction,
     FeedbackState,
     checkpointer,
 )
+from src.app.workflow.enums import PlannerRoutes, Interraction
 from src.app.utils.converters import (
     convert_langgraph_to_openai_messages,
     convert_openai_to_pydantic_messages,
@@ -103,11 +102,11 @@ async def user_feedback_node(state: PlannerState, config: RunnableConfig):
 
     return Command(
         update={"messages_buffer": state.messages_buffer + [HumanMessage(feedback)]},
-        goto=Route.PLAN,
+        goto=PlannerRoutes.PLAN,
     )
 
 
-async def approval_edit_node(state: PlannerState, config: RunnableConfig):
+async def approval_plan_node(state: PlannerState, config: RunnableConfig):
     plan_approval = interrupt(
         {
             "type": Interraction.APPROVAL,
@@ -115,21 +114,25 @@ async def approval_edit_node(state: PlannerState, config: RunnableConfig):
         }
     )
     if plan_approval == "approved":
-        return Command(goto=Route.END)
+        return Command(goto=PlannerRoutes.CODE)
 
-    return Command(goto=Route.USERFEEDBACK)
+    return Command(goto=PlannerRoutes.USERFEEDBACK)
 
 
 heavy_subgraph = (
     StateGraph(PlannerState)
-    .add_node(Route.PLAN, plan_node)
-    .add_node(Route.USERFEEDBACK, user_feedback_node)
-    .add_node(Route.USER_APPROVAL, approval_edit_node)
+    .add_node(PlannerRoutes.PLAN, plan_node)
+    .add_node(PlannerRoutes.USERFEEDBACK, user_feedback_node)
+    .add_node(PlannerRoutes.USER_APPROVAL, approval_plan_node)
     .add_node(
-        Route.CODE,
+        PlannerRoutes.CODE,
         worker_feedback_subgraph_start,
     )
-    .add_edge(START, Route.PLAN)
-    .add_edge(Route.PLAN, Route.CODE)
-    .add_edge(Route.CODE, END)
+    .add_edge(START, PlannerRoutes.PLAN)
+    .add_edge(PlannerRoutes.PLAN, PlannerRoutes.USER_APPROVAL)
+    .add_edge(PlannerRoutes.USER_APPROVAL, PlannerRoutes.CODE)
+    .add_edge(PlannerRoutes.USER_APPROVAL, PlannerRoutes.USERFEEDBACK)
+    .add_edge(PlannerRoutes.USERFEEDBACK, PlannerRoutes.PLAN)
+    .add_edge(PlannerRoutes.PLAN, PlannerRoutes.CODE)
+    .add_edge(PlannerRoutes.CODE, END)
 ).compile(checkpointer=checkpointer)

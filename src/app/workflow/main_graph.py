@@ -4,12 +4,15 @@ import json
 import asyncio
 import aiofiles
 from langgraph.graph import START, END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 from src.app.workflow.types import (
     WrapperState,
     checkpointer,
     FeedbackState,
     PlannerState,
 )
+from src.app.workflow.enums import MainRoutes
 from src.app.workflow.subgraphs.coding_workflow import worker_feedback_subgraph
 from src.app.workflow.subgraphs.planning_workflow import heavy_subgraph
 from src.app.workflow.utils import get_event_queue_from_config, build_static
@@ -21,7 +24,6 @@ from src.app.agents.agent import (
     run_agent_with_events,
 )
 from src.app.agents.schemas import (
-    Route,
     AssembledContext,
     TaskType,
 )
@@ -32,7 +34,7 @@ from src.app.utils.converters import (
     convert_langgraph_to_openai_messages,
 )
 from src.app.utils.logger import get_logger
-
+from textwrap import dedent
 from langchain_core.runnables.config import RunnableConfig
 
 logger = get_logger(__name__)
@@ -72,17 +74,23 @@ async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
 
 
 # ----------------------------nodes---------------------------------
-
-
 async def router_node(
     state: WrapperState, config: RunnableConfig
-) -> Literal[Route.CHAT, Route.CONTEXT, Route.PLAN, Route.CODE]:
+) -> Literal[MainRoutes.CHAT, MainRoutes.CONTEXT, MainRoutes.PLAN, MainRoutes.CODE]:
     logger.debug(f"Task classification agent for {state.messages_buffer[-1].content}")
+
     e = None
+    prompt = dedent(f"""
+    ## Available context
+    {state.ctx}
+    ### User input
+    {state.messages_buffer[-1].content}
+    
+    """)
     event_queue = get_event_queue_from_config(config)
     async for item in run_agent_with_events(
         task_classification_agent,
-        str(state.messages_buffer[-1].content),
+        prompt,
     ):
         await event_queue.put(item)
 
@@ -242,18 +250,18 @@ async def chat_node(state: WrapperState, config: RunnableConfig):
 
 wrapper_graph = (
     StateGraph(WrapperState)
-    .add_node(Route.CHAT, chat_node)
+    .add_node(MainRoutes.CHAT, chat_node)
     .add_node(
-        Route.CONTEXT,
+        MainRoutes.CONTEXT,
         context_node,
     )
-    .add_node(Route.PLAN, heavy_subgraph_start)
-    .add_node(Route.CODE, worker_feedback_subgraph_start)
+    .add_node(MainRoutes.PLAN, heavy_subgraph_start)
+    .add_node(MainRoutes.CODE, worker_feedback_subgraph_start)
     .add_conditional_edges(START, router_node)
-    .add_edge(Route.CONTEXT, Route.PLAN)
-    .add_edge(Route.CHAT, END)
-    .add_edge(Route.PLAN, END)
-    .add_edge(Route.CODE, END)
+    .add_conditional_edges(MainRoutes.CONTEXT, router_node)
+    .add_edge(MainRoutes.CHAT, END)
+    .add_edge(MainRoutes.PLAN, END)
+    .add_edge(MainRoutes.CODE, END)
 ).compile(checkpointer=checkpointer)
 
 
@@ -301,61 +309,68 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
 async def run_main_graph(
     prompt: str, conversation_id: uuid.UUID, thread_id: str
 ) -> None:
-    """
-    Execute the main workflow graph with unified event orchestration.
-    This function emits workflow-level events while agents emit their own
-    detailed AG-UI events via run_agent_safe. All events flow through the
-    unified event system for consistent frontend consumption.
-    """
+    """Execute the main workflow graph with unified event orchestration and interrupt handling."""
     event_queue: asyncio.Queue[str | dict | None] = asyncio.Queue()
 
     try:
         project_context = await build_static()
         initial_state = WrapperState(
             messages_buffer=[HumanMessage(content=prompt)],
-            ctx=f"""
-### Project structure:  
-{project_context}
----
-            """,
+            ctx=f"### Project structure:\n{project_context}\n---",
         )
+
         config: RunnableConfig = {
             "configurable": {"thread_id": conversation_id},
             "run_id": conversation_id,
-            "metadata": {
-                "thread_id": thread_id,
-                "event_queue": event_queue,
-            },
+            "metadata": {"thread_id": thread_id, "event_queue": event_queue},
         }
 
-        async def graph_runner():
-            """
-            Drives the graph execution and crucially, puts the graph's
-            own streamed updates onto the shared event queue.
-            """
-            try:
-                async for streamed_item in wrapper_graph.astream(
-                    initial_state,
-                    config=config,
-                    stream_mode="updates",
-                    subgraphs=True,
-                ):
-                    await event_queue.put(streamed_item)
-            finally:
-                await event_queue.put(None)
-
         await asyncio.gather(
-            graph_runner(), inspect_and_log_events(event_queue, "raw_events.log")
+            graph_runner_with_interruption(
+                wrapper_graph, initial_state, config, event_queue
+            ),
+            inspect_and_log_events(event_queue, "raw_events.log"),
         )
-        logger.info("Main graph inspection run complete.")
+
+        logger.info("Main graph execution completed successfully.")
 
     except Exception as e:
-        logger.error(f"An error occurred during graph execution: {e}", exc_info=True)
+        logger.error(f"Graph execution failed: {e}", exc_info=True)
+        raise
+
+
+async def graph_runner_with_interruption(
+    graph: CompiledStateGraph,
+    initial_state: WrapperState | Command,
+    config: RunnableConfig,
+    event_queue: asyncio.Queue[str | dict | None],
+):
+    """Stream graph execution with recursive interrupt handling."""
+    try:
+        async for item in graph.astream(
+            initial_state, config=config, stream_mode="updates", subgraphs=True
+        ):
+            if isinstance(item, dict) and "__interrupt__" in item:
+                payload = item["__interrupt__"][0].value
+
+                if payload["type"] == "FEEDBACK":
+                    response = input("Feedback: ")
+                else:
+                    response = input("Approve? (y/n): ").lower() == "y"
+
+                await graph_runner_with_interruption(
+                    graph, Command(resume=response), config, event_queue
+                )
+                return
+
+            await event_queue.put(item)
+    finally:
         await event_queue.put(None)
-        raise e
 
 
 # --------------------------------------TEST RUNS-------------------------------------
+
+
 async def main():
     prompt = input("Please enter your prompt: " + "\n" + ">")
 

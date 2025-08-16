@@ -1,20 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Literal
-from enum import StrEnum
-
-
-# -------------------------------------------------
-# Agents outputs models
-# -------------------------------------------------
-class Route(StrEnum):
-    CHAT = "chat"
-    CONTEXT = "context"
-    PLAN = "plan"
-    FEEDBACK = "feedback"
-    CODE = "code"
-    USERFEEDBACK = "user_feedback"
-    USER_APPROVAL = "user_approval"
-    END = "__end__"
+from src.app.workflow.enums import MainRoutes
 
 
 # ----------------evaluator_agent-------------------
@@ -338,14 +324,16 @@ class AssembledContext(BaseModel):
 # --------------Task classification agent--------------
 #
 class TaskType(BaseModel):
-    task_type: Literal[Route.CHAT, Route.CONTEXT, Route.PLAN, Route.CODE] = Field(
+    task_type: Literal[
+        MainRoutes.CHAT, MainRoutes.CONTEXT, MainRoutes.PLAN, MainRoutes.CODE
+    ] = Field(
         ...,
         description=f"""
         classification of the task type based on the user's input
-        {Route.CHAT}: the task is a simple chat/conversation/Q&A
-        {Route.CONTEXT}: the task needs alot more information to be completed
-        {Route.PLAN}: the task is huge/complex and needs to be broken down into smaller steps
-        {Route.CODE}: the task is a simple coding task that can be completed right away
+        {MainRoutes.CHAT}: the task is a simple chat/conversation/Q&A
+        {MainRoutes.CONTEXT}: the task needs alot more information to be completed
+        {MainRoutes.PLAN}: the task is huge/complex and needs to be broken down into smaller steps
+        {MainRoutes.CODE}: the task is a simple coding task that can be completed right away
         """,
     )
     reasoning: str = Field(

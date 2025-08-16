@@ -32,10 +32,6 @@ class EditParams(BaseModel):
         ...,
         description="Code block to insert in its place.",
     )
-    expect: int = Field(
-        1,
-        description="How many occurrences of `old` must exist (safety check).",
-    )
 
 
 # ---------- Helpers ----------------------------------------------------------
