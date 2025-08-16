@@ -12,6 +12,7 @@ from src.app.utils.converters import (
     convert_langgraph_to_openai_messages,
     convert_openai_to_pydantic_messages,
 )
+
 from src.app.workflow.utils import get_event_queue_from_config
 from src.app.utils.logger import get_logger
 from textwrap import dedent
@@ -158,12 +159,14 @@ async def worker_node(state: FeedbackState, config: RunnableConfig):
     )
     tokens = token_count(prompt)
     logger.debug(f"Coding agent of {tokens} agent for {prompt}")
+    queue = get_event_queue_from_config(config)
     worker_call = None
     async for run in run_agent_with_events(
         coding_agent,
         prompt,
         message_history=openai_dicts,
     ):
+        await queue.put(run)
         if isinstance(run, WorkerResult):
             worker_call = run
 
@@ -198,6 +201,7 @@ async def worker_node(state: FeedbackState, config: RunnableConfig):
     """)
     return {
         "messages_buffer": state.messages_buffer + [AIMessage(structured_output)],
+        "last_worker_output": worker_call,
         "dynamic_ctx": state.dynamic_ctx + ("\n\n---\n\n" + worker_call.research_notes)
         if worker_call.research_notes
         else "",

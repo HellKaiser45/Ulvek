@@ -160,6 +160,8 @@ coding_agent = Agent(
     system_prompt=(CODING_AGENT_FULL_PROMPT,),
     name="coding_agent",
     output_type=WorkerResult,
+    retries=5,
+    instructions=f"You must return ONLY valid JSON matching {WorkerResult}.",
     tools=[
         Tool(search_files),
     ],

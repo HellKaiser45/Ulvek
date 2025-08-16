@@ -106,8 +106,8 @@ class WorkerResult(BaseModel):
     summary: str = Field(
         ..., description="A concise summary of all the work done and outcomes"
     )
-    files_to_edit: list[FileEditOperation] = Field(
-        default_factory=list, description="A list of files modifications to be applied"
+    files_edited: list[FileEditOperation] | None = Field(
+        None, description="A list of files modifications performed"
     )
     research_notes: str | None = Field(
         None, description="Free-form notes from a research or information-gathering"

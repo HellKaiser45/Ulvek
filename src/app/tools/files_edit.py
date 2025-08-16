@@ -66,6 +66,7 @@ async def write_file(params: WriteParams) -> str:
     exists = src.exists()
     new_content = textwrap.dedent(params.content).lstrip()
     tmp = src.with_suffix(src.suffix + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(new_content)
     tmp.replace(src)
     return f"{'Overwrote' if exists else 'Created'} {params.file_path}"
@@ -120,6 +121,7 @@ async def edit_file(params: EditParams) -> str:
         return "No change applied (identical)."
 
     tmp = src.with_suffix(src.suffix + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(new_content)
     tmp.replace(src)
     return f"Successfully applied edit to {params.file_path}"

@@ -9,6 +9,9 @@ from src.app.tools.chunkers import (
     chunk_code_on_demand,
 )
 from src.app.tools.memory import process_multiple_messages_with_temp_memory
+from src.app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class MatchText(BaseModel):
@@ -104,7 +107,7 @@ class Search_file_request(BaseModel):
     )
 
 
-def _get_ripgrep_matches(req: RipgrepSearchRequest):
+def _get_ripgrep_matches(req: RipgrepSearchRequest) -> list[SearchMatch]:
     root = Path.cwd().resolve()
     rg = Ripgrepy(req.query, str(root)).line_number().json()
 
@@ -117,7 +120,6 @@ def _get_ripgrep_matches(req: RipgrepSearchRequest):
     if req.max_count:
         rg = rg.max_count(req.max_count)
 
-    # Apply path globs
     for p in req.paths:
         abs_path = Path(p).expanduser().resolve()
         rel = abs_path.relative_to(root)
@@ -125,12 +127,17 @@ def _get_ripgrep_matches(req: RipgrepSearchRequest):
 
     rg = rg.glob("!main.py")
 
-    out = rg.run().as_dict
-    if not out:
+    raw = rg.run().as_dict
+    if not raw:  # empty list or falsy
         return []
 
-    adapter = TypeAdapter(list[SearchMatch])
-    return adapter.validate_python(out)
+    try:
+        adapter = TypeAdapter(list[SearchMatch])
+        return adapter.validate_python(raw)
+    except Exception as e:
+        # log once, return empty instead of exploding the agent
+        logger.warning(f"ripgrepy JSON decode failed: {e}")
+        return []
 
 
 def enclosing_block(

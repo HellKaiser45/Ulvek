@@ -12,7 +12,7 @@ from src.app.workflow.types import (
     FeedbackState,
     PlannerState,
 )
-from src.app.workflow.enums import MainRoutes
+from src.app.workflow.enums import MainRoutes, Interraction
 from src.app.workflow.subgraphs.coding_workflow import worker_feedback_subgraph
 from src.app.workflow.subgraphs.planning_workflow import heavy_subgraph
 from src.app.workflow.utils import get_event_queue_from_config, build_static
@@ -51,7 +51,9 @@ async def worker_feedback_subgraph_start(state: WrapperState, config: RunnableCo
         static_ctx=state.ctx,
     )
     logger.debug(f"Worker feedback subgraph start: {worker_state}")
-    start_worker_graph = worker_feedback_subgraph.invoke(worker_state)
+    start_worker_graph = await worker_feedback_subgraph.ainvoke(
+        worker_state, config=config
+    )
     parse_worker_graph = FeedbackState(**start_worker_graph)
     proper_output = f"""
     Here is an overview of the changes I made:
@@ -117,11 +119,13 @@ async def context_node(state: WrapperState, config: RunnableConfig):
     tokens = token_count(prompt)
     logger.debug(f"Context retriever agent of {tokens} agent for {prompt}")
     context_call = None
+    event_queue = get_event_queue_from_config(config)
     async for run in run_agent_with_events(
         context_retriever_agent,
         prompt,
         message_history=openai_dicts,
     ):
+        await event_queue.put(run)
         if isinstance(run, AssembledContext):
             context_call = run
 
@@ -290,12 +294,8 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
 
                 # 2. Write a structured, readable version to the log file
                 try:
-                    # Use json.dumps for pretty-printing dicts. Use default=str
-                    # to handle potential non-serializable types like UUIDs.
-                    json_str = json.dumps(item, indent=2, default=str)
-                    await f.write(json_str + "\n---------------------------------\n")
+                    await f.write(item + "\n---------------------------------\n")
                 except TypeError:
-                    # Fallback for items that are not JSON serializable at all
                     await f.write(str(item) + "\n---------------------------------\n")
 
     except Exception as e:
@@ -347,23 +347,39 @@ async def graph_runner_with_interruption(
 ):
     """Stream graph execution with recursive interrupt handling."""
     try:
-        async for item in graph.astream(
-            initial_state, config=config, stream_mode="updates", subgraphs=True
-        ):
-            if isinstance(item, dict) and "__interrupt__" in item:
-                payload = item["__interrupt__"][0].value
+        state = initial_state
+        while True:
+            async for item in graph.astream(
+                state, config=config, stream_mode="updates", subgraphs=True
+            ):
+                if isinstance(item, tuple) and len(item) == 2:
+                    path, payload = item
+                    if "__interrupt__" in payload:
+                        interrupt = payload["__interrupt__"][0]
+                        value = interrupt.value
+                        # Printing a big banner to indicate the start of a new iteration
+                        print("\n" * 100)
+                        print(f"Starting iteration {path}")
+                        print("-" * 100)
+                        print()
 
-                if payload["type"] == "FEEDBACK":
-                    response = input("Feedback: ")
+                        if value.get("type") == Interraction.FEEDBACK:
+                            response = input("Feedback: ")
+                        else:
+                            response = input("Approve? (y/n): ").lower() == "y"
+
+                        # instead of recursion, update `state` so the outer loop restarts
+                        state = Command(resume=response)
+                        break  # <-- exit inner async-for and restart with new state
+                    else:
+                        await event_queue.put(item)
+
                 else:
-                    response = input("Approve? (y/n): ").lower() == "y"
+                    await event_queue.put(item)
+            else:
+                # async-for exhausted without hitting interrupt => graph finished
+                break
 
-                await graph_runner_with_interruption(
-                    graph, Command(resume=response), config, event_queue
-                )
-                return
-
-            await event_queue.put(item)
     finally:
         await event_queue.put(None)
 

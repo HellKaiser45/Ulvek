@@ -9,6 +9,7 @@ from src.app.utils.converters import (
     convert_openai_to_pydantic_messages,
     token_count,
 )
+from src.app.workflow.utils import get_event_queue_from_config
 from langgraph.types import Command, interrupt
 from langgraph.graph import START, END, StateGraph
 
@@ -50,8 +51,20 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
             messages_buffer=[HumanMessage(init_messate)],
             id=task.task_id,
         )
+        thread_id_from_config = config.get("configurable", {}).get("thread_id")
+        # Extract original configurable dict or use empty if missing
+        original_configurable = config.get("configurable", {})
+
+        # Replace only thread_id
+        new_configurable = {
+            **original_configurable,
+            "thread_id": f"{thread_id_from_config}_{task.task_id}",
+        }
+
+        # Build a new RunnableConfig keeping all other keys the same
+        updated_config: RunnableConfig = {**config, "configurable": new_configurable}
         start_worker_graph = await worker_feedback_subgraph.ainvoke(
-            worker_state, config=config
+            worker_state, config=updated_config
         )
         parse_worker_graph = FeedbackState(**start_worker_graph)
         proper_output = f"""
@@ -81,12 +94,14 @@ async def plan_node(state: PlannerState, config: RunnableConfig):
 
     tokens = token_count(prompt)
     logger.debug(f"plan retriever agent of {tokens} tokens for prompt: {prompt}")
+    event_queue = get_event_queue_from_config(config)
     steps = []
     async for run in run_agent_with_events(
         orchestrator_agent,
         prompt,
         message_history=openai_dicts,
     ):
+        await event_queue.put(run)
         if isinstance(run, ProjectPlan):
             steps = run.steps
 
@@ -133,6 +148,5 @@ heavy_subgraph = (
     .add_edge(PlannerRoutes.USER_APPROVAL, PlannerRoutes.CODE)
     .add_edge(PlannerRoutes.USER_APPROVAL, PlannerRoutes.USERFEEDBACK)
     .add_edge(PlannerRoutes.USERFEEDBACK, PlannerRoutes.PLAN)
-    .add_edge(PlannerRoutes.PLAN, PlannerRoutes.CODE)
     .add_edge(PlannerRoutes.CODE, END)
 ).compile(checkpointer=checkpointer)
