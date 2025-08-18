@@ -7,7 +7,7 @@ import asyncio
 from dataclasses import dataclass
 from ..config import settings
 from src.app.tools.interactive_tools import gather_docs_context
-from src.app.tools.search_files import search_files
+from src.app.tools.search_files import search_files, similarity_search, extract_snippet
 from src.app.utils.logger import get_logger
 from src.app.agents.prompts.chat import CONVERSATIONAL_AGENT_PROMPT
 from src.app.agents.prompts.reviewer import REVIEWER_AGENT_PROMPT
@@ -157,31 +157,34 @@ evaluator_agent = Agent(
 
 coding_agent = Agent(
     model,
-    system_prompt=(CODING_AGENT_FULL_PROMPT,),
+    system_prompt=(CODING_AGENT_FULL_PROMPT),
     name="coding_agent",
     output_type=WorkerResult,
     retries=5,
     instructions=f"You must return ONLY valid JSON matching {WorkerResult}.",
     tools=[
         Tool(search_files),
+        Tool(similarity_search),
+        Tool(extract_snippet),
     ],
 )
 
 orchestrator_agent = Agent(
     model,
-    system_prompt=(ORCHESTRATOR_AGENT_PROMPT,),
+    system_prompt=(ORCHESTRATOR_AGENT_PROMPT),
     output_type=ProjectPlan,
     name="orchestrator_agent",
 )
 
 context_retriever_agent = Agent(
     model,
-    system_prompt=(CONTEXT_RETRIEVER_PROMPT,),
+    system_prompt=(CONTEXT_RETRIEVER_PROMPT),
     name="context_gatherer_agent",
     output_type=AssembledContext,
     retries=5,
     tools=[
         Tool(search_files),
+        Tool(similarity_search),
         Tool(gather_docs_context),
     ],
 )

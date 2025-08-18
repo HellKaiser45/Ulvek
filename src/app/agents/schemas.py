@@ -58,6 +58,10 @@ class FileEditOperation(BaseModel):
         ...,
         description="path to the file being edited or created or deleted. File: [path/to/file]",
     )
+    line_to_start_edit: int | None = Field(
+        default=None,
+        description="line number of the start of the code snippet if source is 'codebase'",
+    )
     old_content: str | None = Field(
         None, description="old content of the file for 'edit'"
     )
@@ -106,7 +110,7 @@ class WorkerResult(BaseModel):
     summary: str = Field(
         ..., description="A concise summary of all the work done and outcomes"
     )
-    files_edited: list[FileEditOperation] | None = Field(
+    files_to_edit: list[FileEditOperation] | None = Field(
         None, description="A list of files modifications performed"
     )
     research_notes: str | None = Field(

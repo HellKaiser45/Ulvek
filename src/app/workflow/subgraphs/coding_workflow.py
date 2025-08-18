@@ -6,7 +6,7 @@ from langgraph.graph import START, StateGraph, END
 from src.app.agents.agent import run_agent_with_events, evaluator_agent, coding_agent
 from langchain_core.runnables.config import RunnableConfig
 from src.app.agents.schemas import Evaluation, WorkerResult
-from src.app.tools.files_edit import edit_file, write_file, EditParams, WriteParams
+from src.app.tools.files_edit import edit_file, write_file, add_to_file
 from src.app.utils.converters import (
     token_count,
     convert_langgraph_to_openai_messages,
@@ -49,34 +49,38 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
                 assert file_edit.new_content is not None, (
                     "apply_edit_node called with create operation without new content - check conditional logic"
                 )
-                assert file_edit.old_content is not None, (
-                    "apply_edit_node called with create operation with old content - check conditional logic"
-                )
-
-                await edit_file(
-                    EditParams(
+                if (
+                    file_edit.old_content is None
+                    and file_edit.line_to_start_edit is not None
+                ):
+                    await add_to_file(
+                        file_path=file_edit.file_path,
+                        new_content=file_edit.new_content,
+                        line=file_edit.line_to_start_edit,
+                    )
+                else:
+                    assert file_edit.old_content is not None, (
+                        "apply_edit_node called with edit operation without old content - check conditional logic"
+                    )
+                    await edit_file(
                         file_path=file_edit.file_path,
                         old=file_edit.old_content,
                         new=file_edit.new_content,
                     )
-                )
+
             case "create":
                 assert file_edit.new_content is not None, (
                     "apply_edit_node called with create operation without new content - check conditional logic"
                 )
                 await write_file(
-                    WriteParams(
-                        file_path=file_edit.file_path, content=file_edit.new_content
-                    )
+                    file_path=file_edit.file_path, content=file_edit.new_content
                 )
             case "delete":
                 assert file_edit.old_content is not None, (
                     "apply_edit_node called with delete operation without old content - check conditional logic"
                 )
                 await edit_file(
-                    EditParams(
-                        file_path=file_edit.file_path, old=file_edit.old_content, new=""
-                    )
+                    file_path=file_edit.file_path, old=file_edit.old_content, new=""
                 )
 
     return
@@ -211,11 +215,14 @@ async def worker_node(state: FeedbackState, config: RunnableConfig):
 async def approval_edit_node(state: FeedbackState, config: RunnableConfig):
     if state.last_worker_output is None:
         return
-    if len(state.last_worker_output.files_to_edit) == 0:
+    if (
+        state.last_worker_output.files_to_edit is not None
+        and len(state.last_worker_output.files_to_edit) == 0
+    ):
         return
 
     modifications = []
-    for file_edit in state.last_worker_output.files_to_edit:
+    for file_edit in state.last_worker_output.files_to_edit or []:
         modifications.append(
             {
                 "file_path": file_edit.file_path,
