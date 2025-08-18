@@ -1,6 +1,5 @@
-from typing import Literal
+from typing import Literal, Any
 import uuid
-import json
 import asyncio
 import aiofiles
 from langgraph.graph import START, END, StateGraph
@@ -82,6 +81,7 @@ async def router_node(
     logger.debug(f"Task classification agent for {state.messages_buffer[-1].content}")
 
     e = None
+
     prompt = dedent(f"""
     ## Available context
     {state.ctx}
@@ -89,7 +89,9 @@ async def router_node(
     {state.messages_buffer[-1].content}
     
     """)
+
     event_queue = get_event_queue_from_config(config)
+
     async for item in run_agent_with_events(
         task_classification_agent,
         prompt,
@@ -98,6 +100,7 @@ async def router_node(
 
         if isinstance(item, TaskType):
             e = item
+
     if e is None:
         raise RuntimeError("Task classification agent did not return a result")
 
@@ -131,87 +134,11 @@ async def context_node(state: WrapperState, config: RunnableConfig):
 
     if context_call is None:
         raise RuntimeError("Context agent did not return a result")
-    code_snippets_structured = ""
-    for code_snippet in context_call.code_snippets:
-        if code_snippet.source == "documentation":
-            documentation_provider = (
-                code_snippet.documentation_provider or "not specified"
-            )
-            detail = f"""
-            I found the following code snippet thanks to {code_snippet.source}:
-            {code_snippet.code}
-            I found it relevant to the task because:
-            {code_snippet.relevance_reason}
-            it is extracted from the {documentation_provider} documentation.
-            """
-            code_snippets_structured += "\n\n---\n\n" + detail
-        elif code_snippet.source == "codebase":
-            file_path = code_snippet.file_path or "not specified"
-            start_line = code_snippet.start_line or "not specified"
-            end_line = code_snippet.end_line or "not specified"
-            detail = f"""
-            I found the following code snippet thanks to {code_snippet.source}:
-            {code_snippet.code}
-            I found it relevant to the task because:
-            {code_snippet.relevance_reason}
-            it is extracted from the {file_path} file.
-            It starts at line {start_line} and ends at line {end_line}.
-            """
-            code_snippets_structured += "\n\n---\n\n" + detail
-        else:
-            detail = f"""
-            I found the following code snippet thanks to {code_snippet.source}:
-            {code_snippet.code}
-            I found it relevant to the task because:
-            {code_snippet.relevance_reason}
-            """
-            code_snippets_structured += "\n\n---\n\n" + detail
-    structured_output = f"""
-    ## Summary of the gathered context:
-        Here is a summary of the gathered context:
-        {context_call.retrieval_summary}
-    ## Project structure overview
-        Here is an overview of the project structure:
-        ### Key directories
-        {"\n".join(context_call.project_structure.key_directories)}
-        ### Key files
-        {"\n".join(context_call.project_structure.key_files)}
-        ### Technologies used
-        {"\n".join(context_call.project_structure.technologies_used)}
-        
-        ### structure summary
-        {context_call.project_structure.summary}
-    ## Relevant code snippets (if any)
-        Here are the relevant code snippets:
-            {code_snippets_structured}
-    ## External context (if any)
-        Here is the external context:
-            {
-        "\n".join(
-            f'''
-                source: {ext.source}
-                title: {ext.title}
-                content: 
-                {ext.content}
-                this is relevant to the task because:
-                {ext.relevance_reason}
-                '''
-            for ext in context_call.external_context
-        )
-    }
-    ## Potential gaps in the context (if any)
-        Here are the potential gaps in the context:
-        {
-        "\n".join(
-            context_call.gaps_identified
-            if context_call.gaps_identified
-            else "no gaps identified"
-        )
-    }
-    """
-    return {
-        "ctx": state.ctx + ("\n\n---\n\n" + structured_output),
-    }
+
+    else:
+        return {
+            "ctx": state.ctx + ("\n\n---\n\n" + context_call.model_dump_json()),
+        }
 
 
 async def chat_node(state: WrapperState, config: RunnableConfig):
@@ -343,7 +270,7 @@ async def graph_runner_with_interruption(
     graph: CompiledStateGraph,
     initial_state: WrapperState | Command,
     config: RunnableConfig,
-    event_queue: asyncio.Queue[str | dict | None],
+    event_queue: asyncio.Queue[str | dict | None | Any],
 ):
     """Stream graph execution with recursive interrupt handling."""
     try:
@@ -358,7 +285,7 @@ async def graph_runner_with_interruption(
                         interrupt = payload["__interrupt__"][0]
                         value = interrupt.value
                         # Printing a big banner to indicate the start of a new iteration
-                        print("\n" * 100)
+                        print("-" * 100)
                         print(f"Starting iteration {path}")
                         print("-" * 100)
                         print()

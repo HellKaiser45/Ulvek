@@ -124,16 +124,8 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
     else:
         feedback_construction = dedent(f"""
         This is my feedback on your work:
-        {eval.complete_feedback.feedback}
-        ## Some good points
-        {"\n".join(f"{good}" for good in eval.complete_feedback.strengths)}
-        ## Some bad points
-        {"\n".join(f"{bad}" for bad in eval.complete_feedback.weaknesses)}
-        ## what you need to do to improve
-        {eval.suggested_revision}
-        ## Alternative approach
-        If for some reason you can't to do the suggested revision, you can try the following alternative approach:
-        {eval.alternative_approach}
+        {eval.model_dump_json()}
+        
         """)
         return Command(
             goto=CodeRoutes.CODE,
@@ -177,31 +169,9 @@ async def worker_node(state: FeedbackState, config: RunnableConfig):
     if worker_call is None:
         raise RuntimeError("Worker agent did not return a result")
 
-    file_details_parts = []
-    if worker_call.files_to_edit:
-        for file_edit in worker_call.files_to_edit:
-            operation = file_edit.operation_type or "unknown"
-            path = file_edit.file_path or "not specified"
-            diff_content = file_edit.diff or "No diff available."
-            detail = f"I made the {operation} operation following changes to the file {path}:\n{diff_content}"
-            file_details_parts.append(detail)
-    else:
-        file_details_parts.append("No file to edit.")
-    file_details_str = "\n\n---\n\n".join(file_details_parts)
     structured_output = dedent(f"""
-    ## Summary of the changes I made:
-    {worker_call.summary}
-    ## Thought process
-    ### Reasoning
-    {worker_call.reasoning_logic.description}
-    ### Steps I took
-    {worker_call.reasoning_logic.steps}
-    ## Personnal review of my work
-    {worker_call.self_review}
-    ## Details of the changes
-    
-    {file_details_str}
-    
+    {worker_call.model_dump_json()}
+        
     """)
     return {
         "messages_buffer": state.messages_buffer + [AIMessage(structured_output)],

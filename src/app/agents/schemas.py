@@ -4,38 +4,19 @@ from src.app.workflow.enums import MainRoutes
 
 
 # ----------------evaluator_agent-------------------
-class detailled_feedback(BaseModel):
-    """
-    A detailed explanation of the feedback
-    """
-
-    feedback: str = Field(..., description="A detailed explanation of the feedback")
-    strengths: list[str] = Field(
-        ..., description="list of aspects of the output that were done well"
-    )
-    weaknesses: list[str] = Field(
-        ..., description="list of aspects of the output that were lacking or incorrect"
-    )
-    quality_score: int = Field(
-        ...,
-        ge=0,
-        le=10,
-        description="a score from 0 to 10 that reflects the quality of the work done",
-    )
 
 
 class Evaluation(BaseModel):
     grade: Literal["pass", "revision_needed"] = Field(
         ..., description="the overall assessment of the worker's output"
     )
-    complete_feedback: detailled_feedback = Field(
-        ..., description="A detailed feedback on the work done"
+    feedback: str = Field(..., description="A detailed explanation of the feedback")
+
+    strengths: list[str] = Field(
+        ..., description="list of aspects of the output that were done well"
     )
-    confindence_score: int = Field(
-        ...,
-        ge=0,
-        le=10,
-        description="a score from 0 to 10 that reflects the confidence in the grade attribution ",
+    weaknesses: list[str] = Field(
+        ..., description="list of aspects of the output that were lacking or incorrect"
     )
     suggested_revision: str | None = Field(
         default=None,
@@ -56,14 +37,15 @@ class FileEditOperation(BaseModel):
     )
     file_path: str = Field(
         ...,
-        description="path to the file being edited or created or deleted. File: [path/to/file]",
+        description="path to the file to edit or create. File: [path/to/file]",
     )
     line_to_start_edit: int | None = Field(
         default=None,
-        description="line number of the start of the code snippet if source is 'codebase'",
+        description="line number of the start of the code to implement the change in case of edit",
     )
     old_content: str | None = Field(
-        None, description="old content of the file for 'edit'"
+        None,
+        description="old content of the file for 'edit', if none is provided that means we will just append the changes to the file",
     )
     new_content: str | None = Field(
         None, description="new content of the file for 'edit' and 'create' operations"
@@ -86,48 +68,25 @@ class FileEditOperation(BaseModel):
     )
 
 
-class ReasoningLogic(BaseModel):
-    """
-    The thought process and the task breakdown
-    """
-
-    description: str = Field(
-        ...,
-        description="A description of the reasoning logic and execution plan breakdown",
-    )
-    steps: list[str] = Field(
-        ..., description="A list of steps in the reasoning logic and execution"
-    )
-
-
 class WorkerResult(BaseModel):
     """
     A comprehensive result of a worker's work.
     capture the result of diverse tasks
     """
 
-    task_id: int | None = Field(None, description="id of the task")
+    task_id: int | None = Field(default=None, description="id of the task")
     summary: str = Field(
-        ..., description="A concise summary of all the work done and outcomes"
+        ..., description="A concise summary of all the planned changes"
     )
-    files_to_edit: list[FileEditOperation] | None = Field(
-        None, description="A list of files modifications performed"
+    files_to_edit: list[FileEditOperation] = Field(
+        ..., description="A list of files modifications to be performed"
     )
     research_notes: str | None = Field(
-        None, description="Free-form notes from a research or information-gathering"
+        default=None,
+        description="Free-form notes from a research or information-gathering",
     )
-    reasoning_logic: ReasoningLogic = Field(
-        ..., description="The thought process and the task breakdown"
-    )
-    status: Literal["success", "failure", "incomplete"] = Field(
-        ..., description="Overall status of the task execution"
-    )
-    self_review: str = Field(
-        ..., description="Agent's own assessment of the result quality and confidence."
-    )
-    revision_imcomplete: str | None = Field(
-        None,
-        description="Specific feedback on what needs to be done or changed if status is 'incomplete'",
+    reasoning_logic: str = Field(
+        ..., description="The internal thought process and the task breakdown"
     )
 
 
@@ -176,12 +135,6 @@ class ProjectPlan(BaseModel):
         ...,
         description="The ordered list of step(s) to execute. The workflow should follow dependency order.",
     )
-    estimated_total_complexity: int = Field(
-        ...,
-        ge=0,
-        le=10,
-        description="estimated complexity of the asked task from 0 to 10",
-    )
 
 
 # ----------------context_retriever_agent-----------
@@ -194,10 +147,10 @@ class FileContext(BaseModel):
         ..., description="path to a relevant file providing information"
     )
     file_dependencies: list[str] | None = Field(
-        None, description="list of the other files that are used by the file"
+        default=None, description="list of the other files that are used by the file"
     )
     package_dependencies: list[str] | None = Field(
-        None, description="list of the packages that are used by the file"
+        default=None, description="list of the packages that are used by the file"
     )
     file_description: str = Field(
         ..., description="breif description of the file structure and content"
@@ -309,24 +262,11 @@ class AssembledContext(BaseModel):
         ...,
         description="A description of the strategy used to gather the context and the process of gathering it.(e.g., 'used tool a to gather X info because ...', 'searching for X to make sure ...', ...)",
     )
-    confidence: int = Field(
-        ...,
-        ge=0,
-        le=10,
-        description="Agent's confidence in the relevance and completeness of the gathered context (0 to 10) to perform the task.",
-    )
-    gaps_identified: list[str] | None = Field(
-        None,
-        description="list of potential context gaps and areas that might need further investigation to complete the task",
-    )
-    follow_up_actions: list[str] | None = Field(
-        None,
-        description="list of manual actions that needs to be done by the user before attemting to complete the task and that is not related to coding",
-    )
 
 
 # --------------Task classification agent--------------
-#
+
+
 class TaskType(BaseModel):
     task_type: Literal[
         MainRoutes.CHAT, MainRoutes.CONTEXT, MainRoutes.PLAN, MainRoutes.CODE
