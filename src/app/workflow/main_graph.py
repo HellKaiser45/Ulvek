@@ -208,18 +208,12 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
         f"Starting event inspection. Logging to console and writing to '{output_file}'."
     )
     try:
-        # Use aiofiles for non-blocking file operations in an async context
         async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
             while True:
                 item = await event_queue.get()
-                if item is None:  # Sentinel value to signal the end
+                if item is None:
                     logger.info("Received end signal. Stopping inspector.")
                     break
-
-                # 1. Log the raw item to the console for real-time visibility
-                logger.info(f"RAW_EVENT --- {item}")
-
-                # 2. Write a structured, readable version to the log file
                 try:
                     await f.write(item + "\n---------------------------------\n")
                 except TypeError:

@@ -41,6 +41,7 @@ async def search_files(
     Returns:
         list[SearchMatch]: A list of search matches.( file_path, line_content, line_number)
     """
+    logger.info(f"rg search for {query} in {paths}")
     if paths is None or len(paths) == 0:
         paths = ["."]
     working_dir = Path.cwd()
@@ -56,10 +57,9 @@ async def search_files(
         # Now safe to resolve relative to CWD
         full_path = working_dir / p  # Always resolve from CWD
         if full_path.is_dir():
-            pattern = (p / "*" / "").as_posix()
+            rg = rg.glob(f"{p}/**/*")
         else:
-            pattern = p.as_posix()
-        rg = rg.glob(pattern)
+            rg = rg.glob(str(p))
     try:
         results = rg.run().as_dict
     except json.JSONDecodeError as e:
@@ -70,12 +70,10 @@ async def search_files(
         return "ripgrep search failed, please refine your query"
     matches = []
     non_ignored_files = await get_non_ignored_files()
-    print("non ignored files", non_ignored_files)
     for result in results:
         if result.get("type") == "match":
             data = result["data"]
             raw_path = Path(data["path"]["text"]).relative_to(os.getcwd()).as_posix()
-            print("raw path", raw_path)
             if raw_path in non_ignored_files:
                 matches.append(
                     SearchMatch(
@@ -110,6 +108,9 @@ def extract_snippet(
     str
         Raw snippet including the requested context.
     """
+    logger.info(
+        f"triying to extract snippet from {file_path} at {start_line} with {before} before and {after} after"
+    )
     path = Path(file_path)
     _ensure_in_workspace(path)  # Security check
 
@@ -152,15 +153,13 @@ supported_languages = {
 
 
 async def similarity_search(
-    searchquery: str,
+    question: str,
     paths: list[str] | None = None,
     limit: int = 5,
 ) -> list[str] | str:
-    """
-    Search for top-N most similar chunks across all given files.
-    Only searches non-ignored files based on gitignore patterns.
-    Args:
-        searchquery (str): similarity search query. e.g. "what are the current agent definitions"
+    """similarity search for top-N most similar chunks across all given files. Provide a natural language question to search for.
+       Args:
+        question (str): similarity search query. e.g."what are the current agent definitions"
         paths (list[str] | None): A list of paths to restrict the search to.
         If None, the current working directory is used.
         limit (int): Maximum number of results to return.
@@ -172,6 +171,7 @@ async def similarity_search(
         [FILE: src/utils/helpers.py | CHUNK: 2]
         <chunk content...>
     """
+    logger.info(f"similarity search started for {paths} with {question}")
     if not paths:
         paths = ["."]
 
@@ -235,7 +235,7 @@ async def similarity_search(
     formatted_chunks = format_chunks_for_memory(all_chunks)
     results = process_multiple_messages_with_temp_memory(
         formatted_chunks,
-        searchquery,
+        question,
         limit=limit,
     )
 

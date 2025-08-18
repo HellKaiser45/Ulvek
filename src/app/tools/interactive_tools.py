@@ -2,6 +2,9 @@ from pydantic import BaseModel, Field
 from src.app.tools.chunkers import chunk_docs_on_demand, format_chunks_for_memory
 from src.app.tools.memory import process_multiple_messages_with_temp_memory
 from src.app.tools.search_docs import AsyncContext7Client
+from src.app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -29,7 +32,7 @@ class SearchConfig(BaseModel):
     )
 
 
-async def gather_docs_context(params: SearchConfig) -> list[str]:
+async def gather_docs_context(params: SearchConfig) -> list[str] | str:
     """
     Search Context7 for a library and immediately fetch its documentation.
 
@@ -42,7 +45,11 @@ async def gather_docs_context(params: SearchConfig) -> list[str]:
     -------
     list[str]
         List of documentation strings for the best-matched library.
+    str
+        Error message if the search failed.
     """
+    logger.info(f"Gathering context for {params.model_dump_json()}")
+
     async with AsyncContext7Client() as client:
         docs, tokens, title = await client.search_and_fetch(
             query=params.library_to_search
@@ -54,14 +61,4 @@ async def gather_docs_context(params: SearchConfig) -> list[str]:
             messages_batch=formatted_chunks, query=params.search_in_library
         )
 
-    return []
-
-
-async def prompt_user(
-    prompt: str | list[str],
-) -> str:
-    """
-    Prompt the user via AG-UI and return the raw string response.
-    The conversation id is taken from `ctx.deps.run_id`.
-    """
-    return ""
+    return "No documentation found for the specified library."
