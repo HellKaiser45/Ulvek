@@ -19,8 +19,10 @@ async def get_magika_instance() -> Magika:
     return Magika()
 
 
-async def get_gitignore_spec(root_path: str = os.getcwd()) -> PathSpec:
+async def get_gitignore_spec(root_path: str | None = None) -> PathSpec:
     """Async .gitignore parser using aiofiles"""
+    if root_path is None:
+        root_path = os.getcwd()
     gitignore_path = os.path.join(root_path, ".gitignore")
     default_patterns = [".git/", ".git"]
 
@@ -31,8 +33,10 @@ async def get_gitignore_spec(root_path: str = os.getcwd()) -> PathSpec:
     return PathSpec.from_lines(GitWildMatchPattern, default_patterns)
 
 
-async def get_non_ignored_files(root_path: str = os.getcwd()) -> list[str]:
+async def get_non_ignored_files(root_path: str | None = None) -> list[str]:
     """Async file scanning with proper gitignore handling"""
+    if root_path is None:
+        root_path = os.getcwd()
     spec = await get_gitignore_spec(root_path)
     non_ignored = []
 

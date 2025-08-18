@@ -2,7 +2,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import NamedTuple, List
-
+import asyncio
 from src.app.tools.search_files import search_files
 
 THIS_FILE = Path(__file__).resolve()
@@ -105,7 +105,7 @@ def validate_user_123():
 """)
 
 
-def run_tests():
+async def run_tests():
     """Run comprehensive search tests with assertions."""
 
     results = []
@@ -238,7 +238,9 @@ def run_tests():
 
         for case in test_cases:
             try:
-                matches = search_files(case.query, case.paths, literal=case.literal)
+                matches = await search_files(
+                    case.query, case.paths, literal=case.literal
+                )
                 count = len(matches)
                 expected = case.expected_count
 
@@ -287,4 +289,4 @@ def run_tests():
 
 
 if __name__ == "__main__":
-    run_tests()
+    asyncio.run(run_tests())
