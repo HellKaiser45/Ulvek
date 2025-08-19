@@ -69,6 +69,7 @@ async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
     )
     heavy_graph = await heavy_subgraph.ainvoke(heavy_state, config=config)
     parse_heavy_graph = PlannerState(**heavy_graph)
+
     return {
         "messages_buffer": state.messages_buffer
         + [AIMessage(parse_heavy_graph.gathered_context)]
@@ -86,16 +87,18 @@ async def router_node(
     e = None
 
     prompt = dedent(f"""
-    ## Available context
+    ##Available context so far
     {state.ctx}
-    ### User input
-    {state.messages_buffer[-1].content}
-    
+
+    ##User input
+    {state.messages_buffer[0].content}
+
+    Based on the conversation and what we have gathered so far, what is the next step to take?
     """)
 
     if state.ctx_retry > 3:
         prompt += (
-            "the context retry is at max available anymore dont routes to context agent"
+            "The context retry is at max available anymore dont routes to context agent"
         )
 
     event_queue = get_event_queue_from_config(config)
@@ -116,25 +119,23 @@ async def router_node(
 
 
 async def context_node(state: WrapperState, config: RunnableConfig):
-    openai_dicts = convert_openai_to_pydantic_messages(
-        convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
-    )
     prompt = f"""
     ## Context gathered so far
     {state.ctx}
     --- 
     ## User requested task
-    {state.messages_buffer[-1].content}
-    Gather the necessary information to be able to plan the changes
+    {state.messages_buffer[0].content}
+    Gather the necessary information to be able to implement the initial user request 
     """
+
     tokens = token_count(prompt)
     logger.debug(f"Context retriever agent of {tokens} agent for {prompt}")
     context_call = None
     event_queue = get_event_queue_from_config(config)
+
     async for run in run_agent_with_events(
         context_retriever_agent,
         prompt,
-        message_history=openai_dicts,
     ):
         await event_queue.put(run)
         if isinstance(run, AssembledContext):
@@ -144,8 +145,11 @@ async def context_node(state: WrapperState, config: RunnableConfig):
         raise RuntimeError("Context agent did not return a result")
 
     else:
+        new_ctx = state.ctx
+        new_ctx.append(context_call.model_dump_json())
+
         return {
-            "ctx": state.ctx.append(context_call.model_dump_json()),
+            "ctx": new_ctx,
         }
 
 
@@ -280,7 +284,6 @@ async def graph_runner_with_interruption(
     try:
         state = initial_state
         while True:
-            interrupted = False
             async for item in graph.astream(
                 state, config=config, stream_mode="updates", subgraphs=True
             ):
@@ -297,16 +300,15 @@ async def graph_runner_with_interruption(
                         if value.get("type") == Interraction.FEEDBACK:
                             response = input("Feedback: ")
                         else:
-                            response = input("Approve? (y/n): ").lower() == "y"
+                            response = input("Approve? (y/n): ").lower()
 
                         state = Command(resume=response)
-                        interrupted = True
                         break
                     else:
                         await event_queue.put(item)
                 else:
                     await event_queue.put(item)
-            if interrupted:
+            else:
                 break
     finally:
         await event_queue.put(None)

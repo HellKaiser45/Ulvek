@@ -51,6 +51,7 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
             messages_buffer=[HumanMessage(init_messate)],
             id=task.task_id,
         )
+
         thread_id_from_config = config.get("configurable", {}).get("thread_id")
         original_configurable = config.get("configurable", {})
 
@@ -59,7 +60,6 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
             "thread_id": f"{thread_id_from_config}_{task.task_id}",
         }
 
-        # Build a new RunnableConfig keeping all other keys the same
         updated_config: RunnableConfig = {**config, "configurable": new_configurable}
         start_worker_graph = await worker_feedback_subgraph.ainvoke(
             worker_state, config=updated_config
@@ -78,36 +78,45 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
 
 
 async def plan_node(state: PlannerState, config: RunnableConfig):
+    openai_dicts = []
     logger.debug("Plan node")
-    openai_dicts = convert_openai_to_pydantic_messages(
-        convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
-    )
-    prompt = f"""
-    ## Context gathered so far
-    {state.gathered_context}
-    --- 
-    ## User requested task
-    {state.messages_buffer[-1].content}
-    Plan the changes to be made
-    """
+    if len(state.messages_buffer) == 1:
+        prompt = f"""
+        ## Context gathered so far
+        {state.gathered_context}
+        --- 
+        ## User requested task
+        {state.messages_buffer[0].content}
+        Plan the changes to be made
+        """
+    else:
+        openai_dicts = convert_openai_to_pydantic_messages(
+            convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
+        )
+
+        prompt = str(state.messages_buffer[-1].content)
 
     tokens = token_count(prompt)
     logger.debug(f"plan retriever agent of {tokens} tokens for prompt: {prompt}")
     logger.debug(f"Planning for {prompt}")
     event_queue = get_event_queue_from_config(config)
     steps = []
+    final_run = ""
+
     async for run in run_agent_with_events(
-        orchestrator_agent,
-        prompt,
-        message_history=openai_dicts,
+        orchestrator_agent, prompt, message_history=openai_dicts
     ):
         await event_queue.put(run)
         if isinstance(run, ProjectPlan):
             steps = run.steps
+            final_run = run.model_dump_json()
 
     logger.debug(f"Planning finished: {steps}")
 
-    return {"tasks": steps}
+    return {
+        "tasks": steps,
+        "messages_buffer": state.messages_buffer + [AIMessage(final_run)],
+    }
 
 
 async def user_feedback_node(state: PlannerState, config: RunnableConfig):

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langchain_core.messages import AnyMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -11,7 +11,7 @@ checkpointer = InMemorySaver()
 # -------------------------main wrapper graph state------------------
 class WrapperState(BaseModel):
     messages_buffer: list[AnyMessage]
-    ctx: list[str] = []
+    ctx: list[str] = Field(default_factory=list)
     ctx_retry: int = 0
 
 
