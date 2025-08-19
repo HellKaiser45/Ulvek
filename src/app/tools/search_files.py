@@ -112,10 +112,15 @@ def extract_snippet(
         f"triying to extract snippet from {file_path} at {start_line} with {before} before and {after} after"
     )
     path = Path(file_path)
-    _ensure_in_workspace(path)  # Security check
+    try:
+        _ensure_in_workspace(path)
+    except ValueError as e:
+        logger.error(f"Error in extract_snippet: {e}")
+        return str(e)
 
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
+        logger.error(f"File not found: {file_path}")
+        return f"File not found: {file_path}"
 
     try:
         lines = path.read_text().splitlines()
@@ -240,8 +245,81 @@ async def similarity_search(
     )
 
     total_tokens = token_count(str(results))
+    for result in results:
+        logger.info(f"Similarity search result: {result[:100]}...")
+    logger.info(
+        f"Similarity search finished with {len(results)} results and a total of {total_tokens} tokens"
+    )
 
     if total_tokens > settings.MAX_CONTEXT_TOKENS / 5:
         return f"the results are too long try again by setting the limit to a lower value than {limit}"
 
     return results
+
+
+similarity_search_description = """⚠️ EXPENSIVE TOOL - Use only when absolutely necessary ⚠️
+    
+    Performs semantic similarity search across code chunks using AI embeddings.
+    This is a HIGH-COST operation that should be your LAST RESORT after trying
+    lightweight alternatives like ripgrep or file structure analysis.
+    
+    🔴 WHEN TO USE:
+    - You need to find conceptually similar code (not exact patterns)
+    - You're looking for implementations of abstract concepts
+    - You need to understand how a specific algorithm/pattern is implemented
+    - Ripgrep and file structure search have failed to find what you need
+    
+    🚫 WHEN NOT TO USE:
+    - Looking for exact strings, function names, or imports → use ripgrep
+    - Understanding project structure or file relationships → use file structure tools
+    - Finding error messages or logs → use ripgrep  
+    - Exploring a new codebase → start with file structure + ripgrep
+    - You already have sufficient context to answer the user's question
+    
+    Args:
+        question (str): A focused, specific semantic search query. 
+            ✅ GOOD: "authentication middleware that handles JWT tokens"
+            ✅ GOOD: "error handling patterns for database connections" 
+            ✅ GOOD: "how user permissions are validated"
+            ❌ BAD: "how does this work" (too vague)
+            ❌ BAD: "authentication" (too broad, use ripgrep instead)
+            ❌ BAD: "show me the code" (not semantic)
+            
+        paths (list[str] | None): Restrict search to specific directories/files.
+            ✅ GOOD: ["src/auth", "src/middleware"] (focused search)
+            ✅ GOOD: ["app.py", "main.py"] (specific files)  
+            ✅ GOOD: ["src"] (one main directory)
+            ❌ BAD: ["."] or None (searches entire project - very expensive)
+            ❌ BAD: ["src", "tests", "docs", "config"] (too broad)
+            
+            💡 TIP: Use file structure or ripgrep results to identify relevant paths first
+            
+        limit (int): Maximum chunks to return. Default 5.
+            ✅ GOOD: 3-5 for focused searches
+            ✅ GOOD: 1-2 if you just need one example
+            ❌ BAD: 10+ (expensive and usually unnecessary)
+            
+            💡 TIP: Start with limit=3, increase only if results are insufficient
+    
+    Returns:
+        list[str]: Relevant code chunks with file/chunk metadata banners:
+            [FILE: src/auth/middleware.py | CHUNK: 2]
+            <actual code content>
+            
+        str: Error message if results are too large (exceeds token limits)
+            → Retry with smaller limit or more focused paths
+    
+    ⚡ PERFORMANCE NOTES:
+    - Cost scales with: (number of files) × (file sizes) × (semantic complexity)
+    - Searching entire project (paths=["."] or None) can be 10-50x more expensive
+    - Always prefer targeted searches over broad exploration
+    
+    🎯 USAGE STRATEGY:
+    1. First try: ripgrep for exact patterns, imports, function names
+    2. Then try: file structure analysis to understand project layout  
+    3. Finally try: similarity_search with focused question + targeted paths (only if needed)
+    
+    💡 EXPERT TIP: 
+    If you're tempted to call this multiple times, you're probably using it wrong.
+    One well-crafted call with specific paths should be sufficient.
+    """

@@ -52,10 +52,8 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
             id=task.task_id,
         )
         thread_id_from_config = config.get("configurable", {}).get("thread_id")
-        # Extract original configurable dict or use empty if missing
         original_configurable = config.get("configurable", {})
 
-        # Replace only thread_id
         new_configurable = {
             **original_configurable,
             "thread_id": f"{thread_id_from_config}_{task.task_id}",
@@ -80,6 +78,7 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
 
 
 async def plan_node(state: PlannerState, config: RunnableConfig):
+    logger.debug("Plan node")
     openai_dicts = convert_openai_to_pydantic_messages(
         convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
     )
@@ -94,6 +93,7 @@ async def plan_node(state: PlannerState, config: RunnableConfig):
 
     tokens = token_count(prompt)
     logger.debug(f"plan retriever agent of {tokens} tokens for prompt: {prompt}")
+    logger.debug(f"Planning for {prompt}")
     event_queue = get_event_queue_from_config(config)
     steps = []
     async for run in run_agent_with_events(
@@ -104,6 +104,8 @@ async def plan_node(state: PlannerState, config: RunnableConfig):
         await event_queue.put(run)
         if isinstance(run, ProjectPlan):
             steps = run.steps
+
+    logger.debug(f"Planning finished: {steps}")
 
     return {"tasks": steps}
 
@@ -128,6 +130,7 @@ async def approval_plan_node(state: PlannerState, config: RunnableConfig):
             "payload": state.tasks,
         }
     )
+    logger.debug(f"Approval plan node: {plan_approval}")
     if plan_approval == "approved":
         return Command(goto=PlannerRoutes.CODE)
 
@@ -145,8 +148,5 @@ heavy_subgraph = (
     )
     .add_edge(START, PlannerRoutes.PLAN)
     .add_edge(PlannerRoutes.PLAN, PlannerRoutes.USER_APPROVAL)
-    .add_edge(PlannerRoutes.USER_APPROVAL, PlannerRoutes.CODE)
-    .add_edge(PlannerRoutes.USER_APPROVAL, PlannerRoutes.USERFEEDBACK)
-    .add_edge(PlannerRoutes.USERFEEDBACK, PlannerRoutes.PLAN)
     .add_edge(PlannerRoutes.CODE, END)
 ).compile(checkpointer=checkpointer)

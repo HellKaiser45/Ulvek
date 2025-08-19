@@ -53,6 +53,7 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
                     file_edit.old_content is None
                     and file_edit.line_to_start_edit is not None
                 ):
+                    logger.debug(f"Adding to file {file_edit.file_path}")
                     await add_to_file(
                         file_path=file_edit.file_path,
                         new_content=file_edit.new_content,
@@ -62,6 +63,7 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
                     assert file_edit.old_content is not None, (
                         "apply_edit_node called with edit operation without old content - check conditional logic"
                     )
+                    logger.debug(f"Editing file {file_edit.file_path}")
                     await edit_file(
                         file_path=file_edit.file_path,
                         old=file_edit.old_content,
@@ -72,6 +74,7 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
                 assert file_edit.new_content is not None, (
                     "apply_edit_node called with create operation without new content - check conditional logic"
                 )
+                logger.debug(f"Creating file {file_edit.file_path}")
                 await write_file(
                     file_path=file_edit.file_path, content=file_edit.new_content
                 )
@@ -79,6 +82,7 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
                 assert file_edit.old_content is not None, (
                     "apply_edit_node called with delete operation without old content - check conditional logic"
                 )
+                logger.debug(f"Deleting file {file_edit.file_path}")
                 await edit_file(
                     file_path=file_edit.file_path, old=file_edit.old_content, new=""
                 )
@@ -87,6 +91,7 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
 
 
 async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
+    logger.debug("Give feedback node")
     prompt_construction = f"""
     The task to be done and evaluate is:
     {state.messages_buffer[0].content}
@@ -138,6 +143,7 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
 
 
 async def worker_node(state: FeedbackState, config: RunnableConfig):
+    logger.debug("Worker node")
     openai_dicts = convert_openai_to_pydantic_messages(
         convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
     )
@@ -217,11 +223,6 @@ worker_feedback_subgraph = (
     .add_node(CodeRoutes.USER_APPROVAL, approval_edit_node)
     .add_node(CodeRoutes.USERFEEDBACK, user_feedback_node)
     .add_edge(START, CodeRoutes.CODE)
-    .add_edge(CodeRoutes.USER_APPROVAL, CodeRoutes.APPLYEDIT)
-    .add_edge(CodeRoutes.USER_APPROVAL, CodeRoutes.USERFEEDBACK)
-    .add_edge(CodeRoutes.USERFEEDBACK, CodeRoutes.CODE)
     .add_edge(CodeRoutes.APPLYEDIT, END)
     .add_edge(CodeRoutes.CODE, CodeRoutes.AGENTFEEDBACK)
-    .add_edge(CodeRoutes.AGENTFEEDBACK, CodeRoutes.CODE)
-    .add_edge(CodeRoutes.AGENTFEEDBACK, CodeRoutes.USER_APPROVAL)
 ).compile(checkpointer=checkpointer)

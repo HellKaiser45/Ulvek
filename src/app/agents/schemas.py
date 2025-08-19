@@ -147,10 +147,12 @@ class FileContext(BaseModel):
         ..., description="path to a relevant file providing information"
     )
     file_dependencies: list[str] | None = Field(
-        default=None, description="list of the other files that are used by the file"
+        default_factory=list,
+        description="list of the other files that are used by the file",
     )
     package_dependencies: list[str] | None = Field(
-        default=None, description="list of the packages that are used by the file"
+        default_factory=list,
+        description="list of the packages that are used by the file",
     )
     file_description: str = Field(
         ..., description="breif description of the file structure and content"
@@ -261,6 +263,34 @@ class AssembledContext(BaseModel):
     retrieval_strategy: str = Field(
         ...,
         description="A description of the strategy used to gather the context and the process of gathering it.(e.g., 'used tool a to gather X info because ...', 'searching for X to make sure ...', ...)",
+    )
+    context_coverage_score: float = Field(
+        ...,
+        description="Score 0-1: what fraction of the user query can be answered with this context",
+        ge=0.0,
+        le=1.0,
+    )
+    confidence_score: float = Field(
+        ...,
+        description="Score 0-1: how certain you are about the gathered information",
+        ge=0.0,
+        le=1.0,
+    )
+    remaining_gaps: list[str] = Field(
+        default_factory=list,
+        description="Specific information still needed (max 3 items). Empty list means context is complete.",
+    )
+    search_intent: Literal["exploration", "specific_lookup", "dependency_mapping"] = (
+        Field(
+            ..., description="The primary intent behind this context gathering session"
+        )
+    )
+    tools_used: list[str] = Field(
+        default_factory=list,
+        description="List of tools used in this context gathering (for cost tracking)",
+    )
+    context_stage: Literal["quick_scan", "focused_dive", "complete"] = Field(
+        default="complete", description="Stage of context gathering completed"
     )
 
 

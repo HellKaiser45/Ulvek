@@ -11,7 +11,8 @@ checkpointer = InMemorySaver()
 # -------------------------main wrapper graph state------------------
 class WrapperState(BaseModel):
     messages_buffer: list[AnyMessage]
-    ctx: str = ""
+    ctx: list[str] = []
+    ctx_retry: int = 0
 
 
 # --------------------------feedback worker graph state--------------

@@ -15,7 +15,8 @@ from src.app.workflow.enums import MainRoutes, Interraction
 from src.app.workflow.subgraphs.coding_workflow import worker_feedback_subgraph
 from src.app.workflow.subgraphs.planning_workflow import heavy_subgraph
 from src.app.workflow.utils import get_event_queue_from_config, build_static
-
+import argparse
+import logging
 from src.app.agents.agent import (
     context_retriever_agent,
     conversational_agent,
@@ -32,7 +33,7 @@ from src.app.utils.converters import (
     convert_openai_to_pydantic_messages,
     convert_langgraph_to_openai_messages,
 )
-from src.app.utils.logger import get_logger
+from src.app.utils.logger import get_logger, WorkflowLogger
 from textwrap import dedent
 from langchain_core.runnables.config import RunnableConfig
 
@@ -47,7 +48,7 @@ async def worker_feedback_subgraph_start(state: WrapperState, config: RunnableCo
     logger.debug("Worker feedback subgraph start")
     worker_state = FeedbackState(
         messages_buffer=[state.messages_buffer[-1]],
-        static_ctx=state.ctx,
+        static_ctx=str(state.ctx),
     )
     logger.debug(f"Worker feedback subgraph start: {worker_state}")
     start_worker_graph = await worker_feedback_subgraph.ainvoke(
@@ -63,7 +64,7 @@ async def worker_feedback_subgraph_start(state: WrapperState, config: RunnableCo
 
 async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
     heavy_state = PlannerState(
-        gathered_context=state.ctx,
+        gathered_context=str(state.ctx),
         messages_buffer=[state.messages_buffer[-1]],
     )
     heavy_graph = await heavy_subgraph.ainvoke(heavy_state, config=config)
@@ -78,7 +79,9 @@ async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
 async def router_node(
     state: WrapperState, config: RunnableConfig
 ) -> Literal[MainRoutes.CHAT, MainRoutes.CONTEXT, MainRoutes.PLAN, MainRoutes.CODE]:
-    logger.debug(f"Task classification agent for {state.messages_buffer[-1].content}")
+    logger.debug(
+        f"Task classification agent for message: {state.messages_buffer[-1].content}"
+    )
 
     e = None
 
@@ -89,6 +92,11 @@ async def router_node(
     {state.messages_buffer[-1].content}
     
     """)
+
+    if state.ctx_retry > 3:
+        prompt += (
+            "the context retry is at max available anymore dont routes to context agent"
+        )
 
     event_queue = get_event_queue_from_config(config)
 
@@ -137,7 +145,7 @@ async def context_node(state: WrapperState, config: RunnableConfig):
 
     else:
         return {
-            "ctx": state.ctx + ("\n\n---\n\n" + context_call.model_dump_json()),
+            "ctx": state.ctx.append(context_call.model_dump_json()),
         }
 
 
@@ -227,37 +235,39 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
         )
 
 
-async def run_main_graph(
-    prompt: str, conversation_id: uuid.UUID, thread_id: str
-) -> None:
-    """Execute the main workflow graph with unified event orchestration and interrupt handling."""
+async def run_main_graph(prompt: str, conversation_id: uuid.UUID, thread_id: str):
     event_queue: asyncio.Queue[str | dict | None] = asyncio.Queue()
 
-    try:
-        project_context = await build_static()
-        initial_state = WrapperState(
-            messages_buffer=[HumanMessage(content=prompt)],
-            ctx=f"### Project structure:\n{project_context}\n---",
-        )
+    project_context = await build_static()
+    initial_state = WrapperState(
+        messages_buffer=[HumanMessage(content=prompt)],
+        ctx=[f"### Project structure:\n{project_context}\n---"],
+    )
 
-        config: RunnableConfig = {
-            "configurable": {"thread_id": conversation_id},
-            "run_id": conversation_id,
-            "metadata": {"thread_id": thread_id, "event_queue": event_queue},
-        }
+    config: RunnableConfig = {
+        "configurable": {"thread_id": conversation_id},
+        "run_id": conversation_id,
+        "metadata": {"thread_id": thread_id, "event_queue": event_queue},
+    }
 
-        await asyncio.gather(
+    tasks = [
+        asyncio.create_task(
             graph_runner_with_interruption(
                 wrapper_graph, initial_state, config, event_queue
-            ),
-            inspect_and_log_events(event_queue, "raw_events.log"),
-        )
+            )
+        ),
+        asyncio.create_task(inspect_and_log_events(event_queue, "raw_events.log")),
+    ]
 
+    try:
+        await asyncio.gather(*tasks)
         logger.info("Main graph execution completed successfully.")
-
-    except Exception as e:
-        logger.error(f"Graph execution failed: {e}", exc_info=True)
-        raise
+    except asyncio.CancelledError:
+        logger.warning("Tasks were cancelled.")
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
 
 async def graph_runner_with_interruption(
@@ -270,6 +280,7 @@ async def graph_runner_with_interruption(
     try:
         state = initial_state
         while True:
+            interrupted = False
             async for item in graph.astream(
                 state, config=config, stream_mode="updates", subgraphs=True
             ):
@@ -278,7 +289,6 @@ async def graph_runner_with_interruption(
                     if "__interrupt__" in payload:
                         interrupt = payload["__interrupt__"][0]
                         value = interrupt.value
-                        # Printing a big banner to indicate the start of a new iteration
                         print("-" * 100)
                         print(f"Starting iteration {path}")
                         print("-" * 100)
@@ -289,18 +299,15 @@ async def graph_runner_with_interruption(
                         else:
                             response = input("Approve? (y/n): ").lower() == "y"
 
-                        # instead of recursion, update `state` so the outer loop restarts
                         state = Command(resume=response)
-                        break  # <-- exit inner async-for and restart with new state
+                        interrupted = True
+                        break
                     else:
                         await event_queue.put(item)
-
                 else:
                     await event_queue.put(item)
-            else:
-                # async-for exhausted without hitting interrupt => graph finished
+            if interrupted:
                 break
-
     finally:
         await event_queue.put(None)
 
@@ -309,7 +316,21 @@ async def graph_runner_with_interruption(
 
 
 async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["debug", "info", "warning", "error", "critical"],
+        help="Set log level (default: info)",
+    )
+    args = parser.parse_args()
+
+    # Map string to logging level
+    level = getattr(logging, args.log_level.upper(), logging.INFO)
+    WorkflowLogger.set_level(level)
+
     prompt = input("Please enter your prompt: " + "\n" + ">")
+    WorkflowLogger.set_level(logging.DEBUG)
 
     await run_main_graph(
         prompt,

@@ -6,8 +6,16 @@ from pydantic_ai.models.openai import OpenAIModel
 import asyncio
 from dataclasses import dataclass
 from ..config import settings
-from src.app.tools.interactive_tools import gather_docs_context
-from src.app.tools.search_files import search_files, similarity_search, extract_snippet
+from src.app.tools.interactive_tools import (
+    gather_docs_context,
+    gather_docs_context_description,
+)
+from src.app.tools.search_files import (
+    search_files,
+    similarity_search,
+    extract_snippet,
+    similarity_search_description,
+)
 from src.app.utils.logger import get_logger
 from src.app.agents.prompts.chat import CONVERSATIONAL_AGENT_PROMPT
 from src.app.agents.prompts.reviewer import REVIEWER_AGENT_PROMPT
@@ -164,7 +172,6 @@ coding_agent = Agent(
     instructions=f"You must return ONLY valid JSON matching {WorkerResult}.",
     tools=[
         Tool(search_files),
-        Tool(similarity_search),
         Tool(extract_snippet),
     ],
 )
@@ -184,8 +191,8 @@ context_retriever_agent = Agent(
     retries=5,
     tools=[
         Tool(search_files),
-        Tool(similarity_search),
-        Tool(gather_docs_context),
+        Tool(similarity_search, description=similarity_search_description),
+        Tool(gather_docs_context, description=gather_docs_context_description),
     ],
 )
 
