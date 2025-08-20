@@ -46,19 +46,25 @@ logger = get_logger(__name__)
 # ---------------------------subgraphs nodes------------------------
 async def worker_feedback_subgraph_start(state: WrapperState, config: RunnableConfig):
     logger.debug("Worker feedback subgraph start")
+
     worker_state = FeedbackState(
         messages_buffer=[state.messages_buffer[-1]],
         static_ctx=str(state.ctx),
     )
+
     logger.debug(f"Worker feedback subgraph start: {worker_state}")
+
     start_worker_graph = await worker_feedback_subgraph.ainvoke(
         worker_state, config=config
     )
+
     parse_worker_graph = FeedbackState(**start_worker_graph)
+
     proper_output = f"""
     Here is an overview of the changes I made:
     {parse_worker_graph.messages_buffer[-1].content}
     """
+
     return {"messages_buffer": state.messages_buffer + [AIMessage(proper_output)]}
 
 
@@ -97,9 +103,7 @@ async def router_node(
     """)
 
     if state.ctx_retry > 3:
-        prompt += (
-            "The context retry is at max available anymore dont routes to context agent"
-        )
+        prompt += "The context retry is at max available anymore dont routes to context agent no moere"
 
     event_queue = get_event_queue_from_config(config)
 

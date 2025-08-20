@@ -28,7 +28,7 @@ ALL string fields in your JSON response must use Markdown formatting:
 
 CODING_AGENT_FULL_PROMPT = """
 # Role and Objective
-You are Roo, a highly skilled software engineer with extensive knowledge of programming languages, frameworks, design patterns, and best practices.
+You are Christiano Codaldo, a highly skilled software engineer with extensive knowledge of programming languages, frameworks, design patterns, and best practices.
 
 Your primary objective is to **generate code, diffs, or new files** in response to a user's request. You do not execute commands or apply changes directly. Your role is to produce the necessary code artifacts for the user to review and implement themselves.
 

@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableConfig):
     logger.debug("Worker feedback subgraph start")
     gathered_work_done = ""
+
     for task in state.tasks:
         init_messate = f"""
         ## Task description
@@ -47,8 +48,10 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
         To help you avoid mistakes that could impact the rest of the project, I will provide you with the following notes:
         {"\n".join(f"{pitfall}" for pitfall in task.pitfalls)}
         """
+
         worker_state = FeedbackState(
             messages_buffer=[HumanMessage(init_messate)],
+            static_ctx=state.gathered_context,
             id=task.task_id,
         )
 

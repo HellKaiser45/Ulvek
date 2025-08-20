@@ -93,12 +93,8 @@ async def apply_edit_node(state: FeedbackState, config: RunnableConfig):
 async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
     logger.debug("Give feedback node")
     prompt_construction = f"""
-    ## Original Task
-    {state.messages_buffer[0].content}
-    ---
-    **Proposed File Changes:**
-    {state.messages_buffer[-1].content}
-
+    Please provide your honest feedback on the proposed changes from the coding agent.
+    
     ## Context
     - These changes are PROPOSED only and have not been implemented yet
     - Evaluate based on the original codebase state, not assuming these changes are already applied
@@ -108,12 +104,10 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
     Retry attempt: {state.retry_loop}
 
     """
-    messages_history = (
-        len(state.messages_buffer) > 2
-        and convert_openai_to_pydantic_messages(
-            convert_langgraph_to_openai_messages(state.messages_buffer[1:-1])
-        )
-    ) or None
+    messages_history = convert_openai_to_pydantic_messages(
+        convert_langgraph_to_openai_messages(state.messages_buffer)
+    )
+
     tokens = token_count(prompt_construction)
     logger.debug(f"Evaluator of {tokens} tokens for {prompt_construction}")
     eval = None
@@ -137,7 +131,7 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
         )
     else:
         feedback_construction = dedent(f"""
-        This is my feedback on what you want to do:
+        This is my feedback on what you wanted to do:
         {eval.model_dump_json()}
 
         **Important:** The above proposed changes have NOT been implemented yet. 
@@ -156,49 +150,34 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
 
 async def worker_node(state: FeedbackState, config: RunnableConfig):
     logger.debug("Worker node")
-    clean_messages = []
-    for i, msg in enumerate(state.messages_buffer):
-        if i == 0:
-            clean_messages.append(msg)
 
-        elif (
-            isinstance(msg, HumanMessage)
-            and i > 0
-            and i != 0
-            and i < len(state.messages_buffer) - 1
-        ):
-            clean_messages.append(msg)
+    if len(state.messages_buffer) == 1:
+        prompt = f"""
+        ## Context Information
+        {state.static_ctx}
+        
+        ## Original Task
+        {state.messages_buffer[0].content}
+        
+        ## Important Instructions
+        - Propose NEW changes that build upon or modify the current state
+        - Do NOT assume your previous proposals were implemented
+        - Use your tools to read current file contents before proposing changes
+        - Focus on incremental improvements based on feedback
+        """
+    else:
+        prompt = str(state.messages_buffer[-1].content)
 
     openai_dicts = convert_openai_to_pydantic_messages(
-        convert_langgraph_to_openai_messages(clean_messages)
+        convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
     )
-
-    prompt = f"""
-    ## Context Information
-    {state.dynamic_ctx}
-    ---
-    {state.static_ctx}
-    
-    ## Original Task
-    {state.messages_buffer[0].content}
-    
-    ## Current Status
-    - Retry attempt: {state.retry_loop}
-
-    ## Latest Input
-    {state.messages_buffer[-1].content if state.retry_loop > 0 else "This is the first attempt at solving the task."}
-
-    ## Important Instructions
-    - Propose NEW changes that build upon or modify the current state
-    - Do NOT assume your previous proposals were implemented
-    - Use your tools to read current file contents before proposing changes
-    - Focus on incremental improvements based on feedback
-    """
 
     tokens = token_count(prompt)
     logger.debug(f"Coding agent of {tokens} agent for {prompt}")
     queue = get_event_queue_from_config(config)
+
     worker_call = None
+
     async for run in run_agent_with_events(
         coding_agent,
         prompt,
@@ -216,14 +195,9 @@ async def worker_node(state: FeedbackState, config: RunnableConfig):
     **Note:** These changes are proposed and will be reviewed before implementation. 
     """)
 
-    new_dynamic_ctx = state.dynamic_ctx
-    if worker_call.research_notes:
-        new_dynamic_ctx += f"\n\n### Research Notes (Attempt #{state.retry_loop + 1})\n{worker_call.research_notes}"
-
     return {
         "messages_buffer": state.messages_buffer + [AIMessage(structured_output)],
         "last_worker_output": worker_call,
-        "dynamic_ctx": new_dynamic_ctx,
     }
 
 
@@ -231,14 +205,17 @@ async def approval_edit_node(state: FeedbackState, config: RunnableConfig):
     if state.last_worker_output is None:
         logger.debug("No worker output, skipping approval")
         return
+
     elif (
         state.last_worker_output.files_to_edit is not None
         and len(state.last_worker_output.files_to_edit) == 0
     ):
         logger.debug("No files to edit, skipping approval")
+
         return
 
     modifications = []
+
     for file_edit in state.last_worker_output.files_to_edit or []:
         modifications.append(
             {
@@ -247,7 +224,8 @@ async def approval_edit_node(state: FeedbackState, config: RunnableConfig):
                 "diff": file_edit.diff,
             }
         )
-    str_modifications = "\n".join(modifications)
+
+    str_modifications = "\n".join(str(mod) for mod in modifications)
 
     logger.debug(f"do you approve the following changes: {str_modifications}")
 
