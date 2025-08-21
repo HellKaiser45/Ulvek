@@ -13,7 +13,6 @@ from src.app.tools.interactive_tools import (
 from src.app.tools.search_files import (
     search_files,
     similarity_search,
-    extract_snippet,
     similarity_search_description,
 )
 from src.app.utils.logger import get_logger
@@ -25,10 +24,18 @@ from src.app.agents.prompts.worker import CODING_AGENT_FULL_PROMPT
 from src.app.agents.prompts.task_classification import CLASSIFIER_AGENT_PROMPT
 from src.app.agents.schemas import (
     Evaluation,
-    WorkerResult,
     ProjectPlan,
     AssembledContext,
     TaskType,
+    FilePlan,
+)
+from src.app.tools.file_operations import (
+    get_line_content,
+    get_range_content,
+    read_file_content,
+    find_text_in_file,
+    position_to_offset,
+    offset_to_position,
 )
 
 logger = get_logger(__name__)
@@ -167,12 +174,15 @@ coding_agent = Agent(
     model,
     system_prompt=(CODING_AGENT_FULL_PROMPT),
     name="coding_agent",
-    output_type=WorkerResult,
+    output_type=FilePlan,
     retries=5,
-    instructions=f"You must return ONLY valid JSON matching {WorkerResult}.",
     tools=[
-        Tool(search_files),
-        Tool(extract_snippet),
+        Tool(read_file_content),
+        Tool(get_line_content),
+        Tool(get_range_content),
+        Tool(find_text_in_file),
+        Tool(position_to_offset),
+        Tool(offset_to_position),
     ],
 )
 

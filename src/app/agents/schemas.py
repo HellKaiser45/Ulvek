@@ -4,12 +4,8 @@ from src.app.workflow.enums import MainRoutes
 
 
 # ----------------evaluator_agent-------------------
-
-
 class Evaluation(BaseModel):
-    grade: Literal["pass", "revision_needed"] = Field(
-        ..., description="the overall assessment of the worker's output"
-    )
+    grade: bool = Field(..., description="true to approve, false to reject")
     feedback: str = Field(..., description="A detailed explanation of the feedback")
 
     strengths: list[str] = Field(
@@ -20,7 +16,7 @@ class Evaluation(BaseModel):
     )
     suggested_revision: str | None = Field(
         default=None,
-        description="A suggestion on how to improve the work done only if the grade is 'revision_needed'",
+        description="A suggestion on how to improve the work done only if the grade is 'false'",
     )
     alternative_approach: str | None = Field(
         default=None,
@@ -29,56 +25,94 @@ class Evaluation(BaseModel):
 
 
 # ----------------coding_agent----------------------
-class FileEditOperation(BaseModel):
-    """Represents a single file modification operation."""
-
-    operation_type: Literal["create", "edit", "delete"] = Field(
-        ..., description="type of file operation"
-    )
-    file_path: str = Field(
-        ...,
-        description="path to the file to edit or create. File: [path/to/file]",
-    )
-    line_to_start_edit: int | None = Field(
-        default=None,
-        description="line number of the start of the code to implement the change in case of edit",
-    )
-    old_content: str | None = Field(
-        None,
-        description="old content of the file for 'edit', if none is provided that means we will just append the changes to the file",
-    )
-    new_content: str | None = Field(
-        None, description="new content of the file for 'edit' and 'create' operations"
-    )
-    diff: str | None = Field(
-        None,
-        description="""
-        a unified diff representaion of the change
-        example:
-        path/to/file.py
-        ```
-        >>>>>>> SEARCH
-        def search():
-            pass
-        =======
-        def search():
-        raise NotImplementedError()
-        <<<<<<< REPLACE
-        """,
-    )
 
 
-class WorkerResult(BaseModel):
-    """
-    A comprehensive result of a worker's work.
-    capture the result of diverse tasks
-    """
+class Position(BaseModel):
+    """Character position in a document (0-indexed)"""
+
+    line: int = Field(..., description="Line number (0-indexed)")
+    character: int = Field(..., description="Character offset in line (0-indexed)")
+
+
+class Range(BaseModel):
+    """Text range in a document"""
+
+    start: Position = Field(..., description="Start position (inclusive)")
+    end: Position = Field(..., description="End position (exclusive)")
+
+
+class TextEdit(BaseModel):
+    """A single text edit operation"""
+
+    range: Range = Field(..., description="Range to replace")
+    new_text: str = Field(..., description="New text content")
+
+
+class FileOperation(BaseModel):
+    """Base class for all file operations"""
+
+    path: str = Field(..., description="File path relative to project root")
+
+
+class CreateFileOperation(FileOperation):
+    """Create a new file"""
+
+    kind: Literal["create"] = "create"
+    content: str = Field(..., description="Complete file content")
+
+
+class DeleteFileOperation(FileOperation):
+    """Delete an existing file"""
+
+    kind: Literal["delete"] = "delete"
+
+
+class ReplaceFileOperation(FileOperation):
+    """Replace entire file content"""
+
+    kind: Literal["replace"] = "replace"
+    content: str = Field(..., description="New complete file content")
+
+
+class EditFileOperation(FileOperation):
+    """Edit file using precise character positions"""
+
+    kind: Literal["edit"] = "edit"
+    edits: list[TextEdit] = Field(..., description="Text edits to apply")
+
+
+class PatchFileOperation(FileOperation):
+    """Apply unified diff patch"""
+
+    kind: Literal["patch"] = "patch"
+    diff: str = Field(..., description="Unified diff content")
+
+
+class NoOpOperation(BaseModel):
+    """No changes needed"""
+
+    kind: Literal["noop"] = "noop"
+    reason: str = Field(..., description="Why no operation is needed")
+
+
+FileOperationType = (
+    CreateFileOperation
+    | DeleteFileOperation
+    | ReplaceFileOperation
+    | EditFileOperation
+    | PatchFileOperation
+    | NoOpOperation
+)
+
+
+class FilePlan(BaseModel):
+    """AI agent output - list of file operations"""
 
     task_id: int | None = Field(default=None, description="id of the task")
     summary: str = Field(
         ..., description="A concise summary of all the planned changes"
     )
-    files_to_edit: list[FileEditOperation] = Field(
+    operations: list[FileOperationType] = Field(
         ..., description="A list of files modifications to be performed"
     )
     research_notes: str | None = Field(

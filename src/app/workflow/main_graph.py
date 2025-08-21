@@ -244,38 +244,46 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
 
 
 async def run_main_graph(prompt: str, conversation_id: uuid.UUID, thread_id: str):
+    """Run the main graph with proper interrupt handling."""
     event_queue: asyncio.Queue[str | dict | None] = asyncio.Queue()
-
     project_context = await build_static()
     initial_state = WrapperState(
         messages_buffer=[HumanMessage(content=prompt)],
         ctx=[f"### Project structure:\n{project_context}\n---"],
     )
-
     config: RunnableConfig = {
         "configurable": {"thread_id": conversation_id},
         "run_id": conversation_id,
         "metadata": {"thread_id": thread_id, "event_queue": event_queue},
     }
 
-    tasks = [
-        asyncio.create_task(
-            graph_runner_with_interruption(
-                wrapper_graph, initial_state, config, event_queue
-            )
+    graph_task = asyncio.create_task(
+        graph_runner_with_interruption(
+            wrapper_graph, initial_state, config, event_queue
         ),
-        asyncio.create_task(inspect_and_log_events(event_queue, "raw_events.log")),
-    ]
+        name="graph_execution",
+    )
+    inspector_task = asyncio.create_task(
+        inspect_and_log_events(event_queue, "raw_events.log"), name="event_logging"
+    )
 
     try:
-        await asyncio.gather(*tasks)
-        logger.info("Main graph execution completed successfully.")
-    except asyncio.CancelledError:
-        logger.warning("Tasks were cancelled.")
+        await asyncio.gather(graph_task, inspector_task)
+        logger.info("All tasks completed successfully.")
+
+    except Exception as e:
+        logger.error(f"Error during execution: {e}", exc_info=True)
+        raise
     finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
+        # Clean up
+        for task in [graph_task, inspector_task]:
+            if not task.done():
+                logger.debug(f"Cancelling {task.get_name()}")
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
 
 async def graph_runner_with_interruption(
@@ -288,6 +296,7 @@ async def graph_runner_with_interruption(
     try:
         state = initial_state
         while True:
+            interrupted = False
             async for item in graph.astream(
                 state, config=config, stream_mode="updates", subgraphs=True
             ):
@@ -307,11 +316,14 @@ async def graph_runner_with_interruption(
                             response = input("Approve? (y/n): ").lower()
 
                         state = Command(resume=response)
+                        interrupted = True
                         break
                     else:
                         await event_queue.put(item)
                 else:
                     await event_queue.put(item)
+            if interrupted:
+                continue
             else:
                 break
     finally:
