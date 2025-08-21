@@ -24,7 +24,7 @@ from src.app.agents.agent import (
     run_agent_with_events,
 )
 from src.app.agents.schemas import (
-    AssembledContext,
+    GatheredContext,
     TaskType,
 )
 from langchain_core.messages import HumanMessage, AIMessage
@@ -52,7 +52,7 @@ async def worker_feedback_subgraph_start(state: WrapperState, config: RunnableCo
         static_ctx=str(state.ctx),
     )
 
-    logger.debug(f"Worker feedback subgraph start: {worker_state}")
+    logger.debug(f"Worker feedback subgraph start: {str(worker_state)[:100]}")
 
     start_worker_graph = await worker_feedback_subgraph.ainvoke(
         worker_state, config=config
@@ -73,6 +73,8 @@ async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
         gathered_context=str(state.ctx),
         messages_buffer=[state.messages_buffer[-1]],
     )
+    logger.debug(f"Worker feedback subgraph start: {str(heavy_state)[:100]}")
+
     heavy_graph = await heavy_subgraph.ainvoke(heavy_state, config=config)
     parse_heavy_graph = PlannerState(**heavy_graph)
 
@@ -103,7 +105,7 @@ async def router_node(
     """)
 
     if state.ctx_retry > 3:
-        prompt += "The context retry is at max available anymore dont routes to context agent no moere"
+        return MainRoutes.PLAN
 
     event_queue = get_event_queue_from_config(config)
 
@@ -133,7 +135,7 @@ async def context_node(state: WrapperState, config: RunnableConfig):
     """
 
     tokens = token_count(prompt)
-    logger.debug(f"Context retriever agent of {tokens} agent for {prompt}")
+    logger.debug(f"Context retriever agent of {tokens} agent for {prompt[:100]}")
     context_call = None
     event_queue = get_event_queue_from_config(config)
 
@@ -142,7 +144,7 @@ async def context_node(state: WrapperState, config: RunnableConfig):
         prompt,
     ):
         await event_queue.put(run)
-        if isinstance(run, AssembledContext):
+        if isinstance(run, GatheredContext):
             context_call = run
 
     if context_call is None:
@@ -230,10 +232,8 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
                 if item is None:
                     logger.info("Received end signal. Stopping inspector.")
                     break
-                try:
-                    await f.write(item + "\n---------------------------------\n")
-                except TypeError:
-                    await f.write(str(item) + "\n---------------------------------\n")
+
+                await f.write(str(item) + "\n---------------------------------\n")
 
     except Exception as e:
         logger.error(f"Error in inspect_and_log_events: {e}", exc_info=True)
@@ -268,22 +268,15 @@ async def run_main_graph(prompt: str, conversation_id: uuid.UUID, thread_id: str
     )
 
     try:
-        await asyncio.gather(graph_task, inspector_task)
+        await graph_task
         logger.info("All tasks completed successfully.")
 
     except Exception as e:
         logger.error(f"Error during execution: {e}", exc_info=True)
         raise
     finally:
-        # Clean up
-        for task in [graph_task, inspector_task]:
-            if not task.done():
-                logger.debug(f"Cancelling {task.get_name()}")
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        await event_queue.put(None)
+        await inspector_task
 
 
 async def graph_runner_with_interruption(

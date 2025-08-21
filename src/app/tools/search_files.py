@@ -1,8 +1,9 @@
 from ripgrepy import Ripgrepy
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, FilePath, DirectoryPath
 import os
 import json
+from typing import Sequence, Literal
 from src.app.tools.codebase import process_file, get_non_ignored_files
 from src.app.tools.files_edit import _ensure_in_workspace
 from src.app.tools.chunkers import (
@@ -18,6 +19,20 @@ from src.app.config import settings
 logger = get_logger(__name__)
 
 
+class SearchFilesInput(BaseModel):
+    """Schema for search_files tool input."""
+
+    query: str = Field(..., description="Search query string")
+    paths: list[FilePath | DirectoryPath] | None = Field(
+        default=None,
+        description="Relative file/directory paths to search within. Defaults to project root.",
+    )
+    literal: bool = Field(
+        False,
+        description="If true, treats the query as a literal string instead of a regex",
+    )
+
+
 class SearchMatch(BaseModel):
     """A single search match result."""
 
@@ -26,66 +41,72 @@ class SearchMatch(BaseModel):
     line_number: int
 
 
-async def search_files(
-    query: str, paths: list[str] | None = None, literal: bool = False
-):
-    """
-    Search current working directory for files matching the given query the query will be searched in all files in the list of paths paths.
-    Or in the current working directory if paths is None.
-    But the query is not a file or file path but a regex pattern.
-    Args:
-        query (str): right-anchored regex pattern to search for.
-        paths (list[str] | None): A list of paths to restrict the search to. Must be relative to the current working directory.
-            If None, the current working directory is used.
-        literal (bool): If True, treat the query as a literal string instead of a regex.
-    Returns:
-        list[SearchMatch]: A list of search matches.( file_path, line_content, line_number)
-    """
-    logger.info(f"rg search for {query} in {paths}")
-    if paths is None or len(paths) == 0:
-        paths = ["."]
+class SearchResponse(BaseModel):
+    """Structured response for search_files tool."""
+
+    status: Literal["ok", "no_results", "error"]
+    matches: list[SearchMatch] = []
+    error_message: str | None = None
+
+
+async def search_files(input_data: SearchFilesInput) -> SearchResponse:
+    """Search for files matching the given query with structured output."""
+
+    query = input_data.query
+    paths = input_data.paths or ["."]
+    literal = input_data.literal
+
     working_dir = Path.cwd()
+    logger.debug(f"Working directory: {working_dir}")
+    logger.info(f"Searching for '{query}' in paths: {paths}")
 
     rg = Ripgrepy(query, str(working_dir)).line_number().json().ignore_case()
     if literal:
         rg = rg.fixed_strings()
-    for path in paths:
-        p = Path(path)
-        # 🔒 Reject absolute paths
-        if p.is_absolute():
-            raise ValueError(f"Absolute paths not supported: {path}")
-        # Now safe to resolve relative to CWD
-        full_path = working_dir / p  # Always resolve from CWD
-        if full_path.is_dir():
-            rg = rg.glob(f"{p}/**/*")
-        else:
-            rg = rg.glob(str(p))
+
+    for path_str in paths:
+        path = Path(path_str)
+        if path.is_absolute():
+            msg = f"Absolute paths not supported: {path}"
+            logger.error(msg)
+            return SearchResponse(status="error", error_message=msg)
+
+        rg = (
+            rg.glob(str(path))
+            if not (working_dir / path).is_dir()
+            else rg.glob(f"{path}/**/*")
+        )
+
     try:
         results = rg.run().as_dict
     except json.JSONDecodeError as e:
-        logger.error(f"ripgrep returned invalid JSON: {e}")
-        return "invalid search query (maybe you included a newline or malformed regex)"
+        msg = f"Invalid JSON from ripgrep: {e}"
+        logger.error(msg)
+        return SearchResponse(status="error", error_message="Invalid search query")
     except Exception as e:
-        logger.error(f"ripgrep failed: {e}")
-        return "ripgrep search failed, please refine your query"
-    matches = []
-    non_ignored_files = await get_non_ignored_files()
+        msg = f"Search failed: {e}"
+        logger.error(msg)
+        return SearchResponse(status="error", error_message=str(e))
+
+    matches: list[SearchMatch] = []
     for result in results:
         if result.get("type") == "match":
             data = result["data"]
             raw_path = Path(data["path"]["text"]).relative_to(os.getcwd()).as_posix()
-            if raw_path in non_ignored_files:
-                matches.append(
-                    SearchMatch(
-                        file_path=str(raw_path),
-                        line_content=data["lines"]["text"].rstrip("\n"),
-                        line_number=data["line_number"],
-                    )
+            matches.append(
+                SearchMatch(
+                    file_path=raw_path,
+                    line_content=data["lines"]["text"].rstrip("\n"),
+                    line_number=data["line_number"],
                 )
-    token_count_total = token_count(str(matches))
-    if token_count_total > settings.MAX_CONTEXT_TOKENS / 5:
-        return "the results are too long try again by selecting more carefully your search query or file paths"
-    return matches if len(matches) > 0 else "no results found"
+            )
+
+    if matches:
+        logger.info(f"Found {len(matches)} matches")
+        return SearchResponse(status="ok", matches=matches)
+    else:
+        logger.info("No results found")
+        return SearchResponse(status="no_results")
 
 
 def extract_snippet(

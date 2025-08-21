@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Literal
+from pydantic import BaseModel, Field, FilePath, DirectoryPath
+from typing import Literal, Optional
 from src.app.workflow.enums import MainRoutes
 
 
@@ -172,160 +172,24 @@ class ProjectPlan(BaseModel):
 
 
 # ----------------context_retriever_agent-----------
-class FileContext(BaseModel):
-    """
-    single file related information
-    """
-
-    file_path: str = Field(
-        ..., description="path to a relevant file providing information"
-    )
-    file_dependencies: list[str] | None = Field(
-        default_factory=list,
-        description="list of the other files that are used by the file",
-    )
-    package_dependencies: list[str] | None = Field(
-        default_factory=list,
-        description="list of the packages that are used by the file",
-    )
-    file_description: str = Field(
-        ..., description="breif description of the file structure and content"
-    )
-    relevance_reason: str = Field(
-        ...,
-        description="justification on the reason(s) why and how this file is relevant to the task",
-    )
+class FileSnippet(BaseModel):
+    file_path: FilePath
+    text: str
+    range: Optional[Range] = None
 
 
-class ExternalContext(BaseModel):
-    """
-    relevant documentation or additional user provided information
-    """
-
-    source: Literal["documentation", "user"] = Field(
-        ..., description="source of the information"
-    )
-    title: str = Field(
-        ...,
-        description="title of the source if source is 'documentation'. e.g., library name, docs page title",
-    )
-    content: str = Field(
-        ..., description="raw content/output of the source or tool if it is relevant"
-    )
-    relevance_reason: str = Field(
-        ...,
-        description="justification on the reason(s) why and how this information is relevant to the task",
-    )
+class ExternalDocChunk(BaseModel):
+    source: str
+    content: str
 
 
-class InterestingCodeSnippet(BaseModel):
-    """
-    A code snippet that is relevant to the task
-    """
-
-    source: Literal["codebase", "documentation", "user"] = Field(
-        ..., description="source of the code snippet"
-    )
-    file_path: str | None = Field(
-        None,
-        description="path to the file containing the code snippet if source is 'codebase'",
-    )
-    start_line: int | None = Field(
-        None,
-        description="line number of the start of the code snippet if source is 'codebase'",
-    )
-    end_line: int | None = Field(
-        None,
-        description="line number of the end of the code snippet if source is 'codebase'",
-    )
-    documentation_provider: str | None = Field(
-        None,
-        description="name of the documentation provider if source is 'documentation' e.g., library name",
-    )
-    code: str = Field(..., description="the code snippet")
-    description: str = Field(..., description="a description of the code snippet")
-    relevance_reason: str = Field(
-        ...,
-        description="justification on the reason(s) why and how this code snippet is relevant to the task",
-    )
-
-
-class ProjectStructureOverview(BaseModel):
-    """A summary of the project's structure."""
-
-    key_directories: list[str] = Field(
-        ..., description="List of important directories."
-    )
-    key_files: list[str] = Field(
-        ..., description="List of important files (entry points, configs)."
-    )
-    technologies_used: list[str] = Field(
-        ..., description="Key libraries/technologies identified."
-    )
-    summary: str = Field(
-        ..., description="A brief narrative summary of the project structure."
-    )
-
-
-class AssembledContext(BaseModel):
-    """
-    Structured output from the gather_docs_context tool
-    Should provide the necessary information for subsequent tasks
-    """
-
-    retrieval_summary: str = Field(
-        ...,
-        description="A summary/inventory of the gathered context from the tools used",
-    )
-
-    project_structure: ProjectStructureOverview = Field(
-        ...,
-        description="A summary of the project's structure, layout and key components.",
-    )
-    code_snippets: list[InterestingCodeSnippet] = Field(
-        default_factory=list,
-        description="A list of code snippets relevant to the task.",
-    )
-    external_context: list[ExternalContext] = Field(
-        default_factory=list,
-        description="Relevant documentation or additional user provided information.",
-    )
-    file_context: list[FileContext] = Field(
-        default_factory=list,
-        description="Relevant files content or extract and their dependencies.",
-    )
-    retrieval_strategy: str = Field(
-        ...,
-        description="A description of the strategy used to gather the context and the process of gathering it.(e.g., 'used tool a to gather X info because ...', 'searching for X to make sure ...', ...)",
-    )
-    context_coverage_score: float = Field(
-        ...,
-        description="Score 0-1: what fraction of the user query can be answered with this context",
-        ge=0.0,
-        le=1.0,
-    )
-    confidence_score: float = Field(
-        ...,
-        description="Score 0-1: how certain you are about the gathered information",
-        ge=0.0,
-        le=1.0,
-    )
-    remaining_gaps: list[str] = Field(
-        default_factory=list,
-        description="Specific information still needed (max 3 items). Empty list means context is complete.",
-    )
-    search_intent: Literal["exploration", "specific_lookup", "dependency_mapping"] = (
-        Field(
-            ..., description="The primary intent behind this context gathering session"
-        )
-    )
-    tools_used: list[str] = Field(
-        default_factory=list,
-        description="List of tools used in this context gathering (for cost tracking)",
-    )
-    context_stage: Literal["quick_scan", "focused_dive", "complete"] = Field(
-        default="complete", description="Stage of context gathering completed"
-    )
+class GatheredContext(BaseModel):
+    summary: str
+    snippets: list[FileSnippet] = []
+    external_docs: list[ExternalDocChunk] = []
+    gaps: list[str] = []
+    questions: list[str] = []
+    tools_used: list[str] = []
 
 
 # --------------Task classification agent--------------

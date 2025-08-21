@@ -1,6 +1,7 @@
 from pydantic_ai import Agent, Tool
 from typing import TypeVar, Any, cast, AsyncGenerator
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModel
 import asyncio
@@ -25,7 +26,7 @@ from src.app.agents.prompts.task_classification import CLASSIFIER_AGENT_PROMPT
 from src.app.agents.schemas import (
     Evaluation,
     ProjectPlan,
-    AssembledContext,
+    GatheredContext,
     TaskType,
     FilePlan,
 )
@@ -135,6 +136,13 @@ async def run_agent_with_events(
                     if run.result:
                         yield cast(AgentOutputT, run.result.output)
                         return
+        except UnexpectedModelBehavior as e:
+            if "finish_reason" in str(e) and "error" in str(e):
+                logger.warning("OpenAI returned error finish_reason, retrying...")
+                await asyncio.sleep(5)
+                continue
+            else:
+                raise
 
         except Exception as e:
             logger.error(
@@ -197,7 +205,7 @@ context_retriever_agent = Agent(
     model,
     system_prompt=(CONTEXT_RETRIEVER_PROMPT),
     name="context_gatherer_agent",
-    output_type=AssembledContext,
+    output_type=GatheredContext,
     retries=5,
     tools=[
         Tool(search_files),
