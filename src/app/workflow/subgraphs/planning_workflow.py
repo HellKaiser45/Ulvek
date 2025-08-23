@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 # -----------------------subgraphs nodes------------------------
 async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableConfig):
-    logger.debug("Worker feedback subgraph start")
+    logger.debug("Worker feedback subgraph start from the PlannerState")
     gathered_work_done = ""
 
     for task in state.tasks:
@@ -39,7 +39,7 @@ async def worker_feedback_subgraph_start(state: PlannerState, config: RunnableCo
         {"\n".join(f"{guideline}" for guideline in task.guidelines)}
     
         ## Dependencies
-        You will focuse on {task.target_ressource} and its dependencies. 
+        You will focuse on {task.target_resource} and its dependencies. 
         Pay attention to the following files and their dependencies:
         {task.file_dependencies}
         

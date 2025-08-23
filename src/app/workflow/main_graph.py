@@ -73,7 +73,7 @@ async def heavy_subgraph_start(state: WrapperState, config: RunnableConfig):
         gathered_context=str(state.ctx),
         messages_buffer=[state.messages_buffer[-1]],
     )
-    logger.debug(f"Worker feedback subgraph start: {str(heavy_state)[:100]}")
+    logger.debug(f"Heavy subgraph start: {str(heavy_state)[:100]}")
 
     heavy_graph = await heavy_subgraph.ainvoke(heavy_state, config=config)
     parse_heavy_graph = PlannerState(**heavy_graph)

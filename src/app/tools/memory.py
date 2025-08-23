@@ -62,8 +62,7 @@ def process_multiple_messages_with_temp_memory(
             logger.warning("No results found")
             return []
         valid_results = [res["memory"] for res in results["results"]]
-
-        logger.debug(f"first valid result: {valid_results[0]}")
+        logger.debug(f"found {len(valid_results)} valid memories")
 
         return valid_results
 

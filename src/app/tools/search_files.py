@@ -38,9 +38,9 @@ async def search_files(input_data: SearchFilesInput) -> list[SearchFilesOutput]:
     try:
         _ensure_in_workspace(dir)
         regex = (
-            re.compile(input_data.pattern, re.IGNORECASE)
+            re.compile(input_data.pattern)
             if input_data.case_sensitive
-            else re.compile(input_data.pattern)
+            else re.compile(input_data.pattern, re.IGNORECASE)
         )
     except Exception as e:
         error_msg = f"Invalid regex pattern: {e}"
@@ -60,7 +60,7 @@ async def search_files(input_data: SearchFilesInput) -> list[SearchFilesOutput]:
     for file in dir.rglob("*"):
         if file.is_file() and file in await get_non_ignored_files():
             content = file.read_text()
-            matches = regex.finditer(content)
+            matches = list(regex.finditer(content))
 
             if matches:
                 ranges = []
@@ -130,11 +130,12 @@ async def similarity_search(
 
     for path in input_data.paths:
         if not path.resolve().is_relative_to(Path.cwd().resolve()):
-            logger.error(
+            logger.warning(
                 f"Path {path} is not relative to the current working directory."
             )
+
         if not path.resolve().is_file():
-            logger.error(f"Path {path} is not a file.")
+            logger.warning(f"Path {path} is not a file.")
 
         else:
             content = path.read_text()

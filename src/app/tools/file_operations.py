@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+from pydantic import FilePath
 from src.app.agents.schemas import (
     FileOperationType,
     FilePlan,
@@ -24,7 +25,7 @@ logger = get_logger(__name__)
 # ----------------------------Functions used as tools -------------------------
 
 
-def get_line_content(file_path: Path, line_number: int) -> LineContentOutput:
+def get_line_content(file_path: Path | FilePath, line_number: int) -> LineContentOutput:
     """Get content of specific line (1-indexed)"""
 
     logger.debug(f"Reading line {line_number} from file: {file_path}")
@@ -63,7 +64,9 @@ def get_line_content(file_path: Path, line_number: int) -> LineContentOutput:
         )
 
 
-def get_range_content(file_path: Path, start_line: int, end_line: int) -> RangeOutput:
+def get_range_content(
+    file_path: Path | FilePath, start_line: int, end_line: int
+) -> RangeOutput:
     """Get content of line range (1-indexed, inclusive)"""
 
     logger.debug(f"Reading lines {start_line}-{end_line} from file: {file_path}")
@@ -105,7 +108,7 @@ def get_range_content(file_path: Path, start_line: int, end_line: int) -> RangeO
     )
 
 
-def read_file_content(file_path: Path) -> ReadFileContentOutput:
+def read_file_content(file_path: Path | FilePath) -> ReadFileContentOutput:
     """Read file content as string"""
 
     logger.debug(f"Reading content from file: {file_path}")
@@ -143,7 +146,9 @@ def read_file_content(file_path: Path) -> ReadFileContentOutput:
         )
 
 
-def find_text_in_file(file_path: Path, search_text: str) -> FindTextInFileOutput:
+def find_text_in_file(
+    file_path: Path | FilePath, search_text: str
+) -> FindTextInFileOutput:
     """Find all occurrences of text in file, return positions"""
     logger.debug(f"Searching for text '{search_text}' in file: {file_path}")
     try:
