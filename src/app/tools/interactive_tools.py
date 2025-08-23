@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from src.app.tools.chunkers import chunk_docs_on_demand, format_chunks_for_memory
+from src.app.utils.chunkers import chunk_docs_on_demand, format_chunks_for_memory
 from src.app.tools.memory import process_multiple_messages_with_temp_memory
 from src.app.tools.search_docs import AsyncContext7Client
 from src.app.utils.logger import get_logger
@@ -58,7 +58,8 @@ async def gather_docs_context(params: SearchConfig) -> list[str] | str:
     if docs:
         formatted_chunks = format_chunks_for_memory(chunk_docs_on_demand(docs))
         results = process_multiple_messages_with_temp_memory(
-            messages_batch=formatted_chunks, query=params.search_in_library
+            messages_batch=formatted_chunks,
+            query=params.search_in_library,
         )
         logger.info(
             f"Gathered {len(results)} results from Mem0 for the docs search for {params.library_to_search} and the query {params.search_in_library}"
@@ -193,3 +194,18 @@ gather_docs_context_description = """💰 EXPENSIVE EXTERNAL API TOOL - Use stra
     = 1 comprehensive call with search_in_library="authentication middleware error handling"
     NOT 3 separate calls.
     """
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(
+        gather_docs_context(
+            SearchConfig(
+                limit=3,
+                library_to_search="pydanticai",
+                search_in_library="agent definition",
+                threshold=0.5,
+            )
+        )
+    )

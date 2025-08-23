@@ -327,21 +327,7 @@ async def graph_runner_with_interruption(
 
 
 async def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--log-level",
-        default="info",
-        choices=["debug", "info", "warning", "error", "critical"],
-        help="Set log level (default: info)",
-    )
-    args = parser.parse_args()
-
-    # Map string to logging level
-    level = getattr(logging, args.log_level.upper(), logging.INFO)
-    WorkflowLogger.set_level(level)
-
     prompt = input("Please enter your prompt: " + "\n" + ">")
-    WorkflowLogger.set_level(logging.DEBUG)
 
     await run_main_graph(
         prompt,

@@ -21,7 +21,7 @@ class AppConfig(BaseSettings):
         default=..., min_length=1, description="Api Key for your model api provider"
     )
     MODEL_NAME: str = Field(
-        default="qwen/qwen3-coder",
+        default="moonshotai/kimi-k2",
         description="AI model to use for generation",
     )
     BASE_URL: str = Field(

@@ -16,7 +16,7 @@ class Evaluation(BaseModel):
     )
     suggested_revision: str | None = Field(
         default=None,
-        description="A suggestion on how to improve the work done only if the grade is 'false'",
+        description="A suggestion on how to improve the work done only if the grade is 'false',",
     )
     alternative_approach: str | None = Field(
         default=None,
@@ -173,23 +173,63 @@ class ProjectPlan(BaseModel):
 
 # ----------------context_retriever_agent-----------
 class FileSnippet(BaseModel):
-    file_path: FilePath
-    text: str
-    range: Optional[Range] = None
+    """A slice found in the current project."""
+
+    file_path: FilePath = Field(..., description="The path to the file")
+    text: str = Field(..., description="The useful content of the file")
+    range: Optional[Range] = Field(
+        default=None,
+        description="Optional line numbers that locate the text inside the file. "
+        "Omit when you can't get the range or if whole file content is relevant.",
+    )
 
 
 class ExternalDocChunk(BaseModel):
-    source: str
-    content: str
+    """A documentation excerpt retrieved for a library, package, or API."""
+
+    source: str = Field(
+        ...,
+        description="Human-readable identifier of the documentation source "
+        "(e.g. 'FastAPI', 'pytest', 'SQLAlchemy').",
+    )
+    content: str = Field(
+        ...,
+        description="Raw markdown or plain-text excerpt returned by the tool.",
+    )
 
 
 class GatheredContext(BaseModel):
-    summary: str
-    snippets: list[FileSnippet] = []
-    external_docs: list[ExternalDocChunk] = []
-    gaps: list[str] = []
-    questions: list[str] = []
-    tools_used: list[str] = []
+    """
+    Complete knowledge bundle produced by the context-gathering agent.
+    Designed to be serialised to JSON and passed **unchanged** to the next agent.
+    """
+
+    summary: str = Field(
+        ...,
+        description="One-sentence overview of what was gathered and why.",
+    )
+    snippets: list[FileSnippet] = Field(
+        default_factory=list,
+        description="Code / config excerpts extracted from the project.",
+    )
+
+    external_docs: list[ExternalDocChunk] = Field(
+        default_factory=list,
+        description="Documentation snippets pulled for libraries or APIs.",
+    )
+    gaps: list[str] = Field(
+        default_factory=list,
+        description="Concrete pieces of information still missing to fulfil the task.",
+    )
+    questions: list[str] = Field(
+        default_factory=list,
+        description="Short questions to ask the user before continuing.",
+    )
+    tools_used: list[str] = Field(
+        default_factory=list,
+        description="Names of the tools that were actually invoked "
+        "(useful for audit or cost tracking).",
+    )
 
 
 # --------------Task classification agent--------------

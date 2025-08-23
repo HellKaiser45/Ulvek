@@ -1,8 +1,9 @@
 from pydantic_ai import Agent, Tool
+import collections.abc
 from typing import TypeVar, Any, cast, AsyncGenerator
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.models.openai import OpenAIModel
 import asyncio
 from dataclasses import dataclass
@@ -14,7 +15,6 @@ from src.app.tools.interactive_tools import (
 from src.app.tools.search_files import (
     search_files,
     similarity_search,
-    similarity_search_description,
 )
 from src.app.utils.logger import get_logger
 from src.app.agents.prompts.chat import CONVERSATIONAL_AGENT_PROMPT
@@ -35,16 +35,13 @@ from src.app.tools.file_operations import (
     get_range_content,
     read_file_content,
     find_text_in_file,
-    position_to_offset,
-    offset_to_position,
 )
 
 logger = get_logger(__name__)
 
 model = OpenAIModel(
-    model_name=settings.MODEL_NAME,
-    provider=OpenAIProvider(
-        base_url=settings.BASE_URL,
+    settings.MODEL_NAME,
+    provider=OpenRouterProvider(
         api_key=settings.OPENROUTER_API_KEY.get_secret_value(),
     ),
 )
@@ -119,6 +116,7 @@ async def run_agent_with_events(
 
     for attempt in range(retries):
         execution_metadata["attempt_count"] = attempt + 1
+        run = None
 
         try:
             iter_kwargs: dict[str, Any] = {}
@@ -129,33 +127,55 @@ async def run_agent_with_events(
                 prompt, message_history=message_history, **iter_kwargs
             ) as run:
                 yield run
-
-                async for node in run:
-                    yield node
+                logger.debug(
+                    f"Agent {agent.name} has currently a context lenght of: {run.usage().total_tokens}"
+                )
+                if isinstance(run, collections.abc.AsyncIterable):
+                    async for node in run:
+                        yield node
 
                     if run.result:
                         yield cast(AgentOutputT, run.result.output)
                         return
+
         except UnexpectedModelBehavior as e:
             if "finish_reason" in str(e) and "error" in str(e):
-                logger.warning("OpenAI returned error finish_reason, retrying...")
-                await asyncio.sleep(5)
+                logger.warning(
+                    f"Agent {agent.name} failed on attempt {attempt + 1} with error: {e}",
+                )
+                logger.warning(f"Here was the last run object: {run}")
+                if attempt == retries - 1:
+                    raise e
+
+                delay = 2**attempt
+
+                await asyncio.sleep(delay)
                 continue
+            elif "Received empty model response" in str(e):
+                logger.warning(
+                    f"Agent {agent.name} failed on attempt {attempt + 1} with error: {e}, retrying...",
+                )
+                if attempt == retries - 1:
+                    raise e
+
+                delay = 2**attempt
+
+                await asyncio.sleep(delay)
+                continue
+
             else:
-                raise
+                logger.error(
+                    f"Agent {agent.name} failed on attempt {attempt + 1} with error: {e}",
+                )
+                logger.error(f"Here was the last run object: {run}")
+                raise e
 
         except Exception as e:
             logger.error(
-                f"Error in agent {agent.name} on attempt {attempt + 1}: {e}",
-                exc_info=True,
+                f"Agent {agent.name} failed on attempt {attempt + 1} with error: {e}",
             )
-
-            if attempt == retries - 1:
-                raise e
-
-            delay = 2**attempt
-
-            await asyncio.sleep(delay)
+            logger.error(f"Here was the last run object: {run}")
+            raise e
 
     raise RuntimeError(f"Agent {agent.name} failed after {retries} retries.")
 
@@ -189,8 +209,6 @@ coding_agent = Agent(
         Tool(get_line_content),
         Tool(get_range_content),
         Tool(find_text_in_file),
-        Tool(position_to_offset),
-        Tool(offset_to_position),
     ],
 )
 
@@ -206,10 +224,9 @@ context_retriever_agent = Agent(
     system_prompt=(CONTEXT_RETRIEVER_PROMPT),
     name="context_gatherer_agent",
     output_type=GatheredContext,
-    retries=5,
     tools=[
         Tool(search_files),
-        Tool(similarity_search, description=similarity_search_description),
+        Tool(similarity_search),
         Tool(gather_docs_context, description=gather_docs_context_description),
     ],
 )

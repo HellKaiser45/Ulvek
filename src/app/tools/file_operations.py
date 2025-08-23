@@ -9,45 +9,116 @@ from src.app.agents.schemas import (
     EditFileOperation,
 )
 from src.app.utils.logger import get_logger
+from src.app.tools.tools_schemas import (
+    LineContentOutput,
+    RangeOutput,
+    ReadFileContentOutput,
+    FindTextInFileOutput,
+)
+from src.app.utils.converters import token_count, truncate_content_by_tokens
+from src.app.config import settings
 
 logger = get_logger(__name__)
+
 # ----------------------------FIle Reading operations--------------------------
+# ----------------------------Functions used as tools -------------------------
 
 
-def get_line_content(file_path: Path, line_number: int) -> str:
+def get_line_content(file_path: Path, line_number: int) -> LineContentOutput:
     """Get content of specific line (1-indexed)"""
+
     logger.debug(f"Reading line {line_number} from file: {file_path}")
-    lines = read_file_content(file_path).splitlines()
+    try:
+        lines = read_file_content(file_path).content.splitlines()
+    except Exception as e:
+        logger.error(f"Failed to read file {file_path}: {e}")
+        return LineContentOutput(
+            status="error",
+            error_message=str(e),
+            content="",
+            file_path=file_path,
+            line_number=line_number,
+        )
+
     if 1 <= line_number <= len(lines):
         content = lines[line_number - 1]
         logger.debug(f"Retrieved content from line {line_number}: {content[:50]}...")
-        return content
-    error_msg = f"Line {line_number} not found in {file_path}"
-    logger.error(error_msg)
-    raise IndexError(error_msg)
+
+        return LineContentOutput(
+            status="ok",
+            content=content,
+            file_path=file_path,
+            line_number=line_number,
+        )
+
+    else:
+        error_msg = f"Line {line_number} not found in {file_path}"
+        logger.error(error_msg)
+
+        return LineContentOutput(
+            status="no_results",
+            content="",
+            file_path=file_path,
+            line_number=line_number,
+        )
 
 
-def get_range_content(file_path: Path, start_line: int, end_line: int) -> str:
+def get_range_content(file_path: Path, start_line: int, end_line: int) -> RangeOutput:
     """Get content of line range (1-indexed, inclusive)"""
+
     logger.debug(f"Reading lines {start_line}-{end_line} from file: {file_path}")
-    lines = read_file_content(file_path).splitlines()
+    try:
+        lines = read_file_content(file_path).content.splitlines()
+    except Exception as e:
+        logger.error(f"Failed to read file {file_path}: {e}")
+        return RangeOutput(
+            status="error",
+            error_message=str(e),
+            content="",
+            file_path=file_path,
+            start_line=start_line,
+            end_line=end_line,
+        )
+
     if start_line < 1 or end_line > len(lines) or start_line > end_line:
         error_msg = f"Invalid range {start_line}-{end_line} in {file_path}"
         logger.error(error_msg)
-        raise IndexError(error_msg)
+
+        return RangeOutput(
+            status="no_results",
+            error_message=error_msg,
+            content="",
+            file_path=file_path,
+            start_line=start_line,
+            end_line=end_line,
+        )
 
     content = "\n".join(lines[start_line - 1 : end_line])
     logger.debug(f"Retrieved content from {end_line - start_line + 1} lines")
-    return content
+
+    return RangeOutput(
+        status="ok",
+        content=content,
+        file_path=file_path,
+        start_line=start_line,
+        end_line=end_line,
+    )
 
 
-def read_file_content(file_path: Path) -> str:
+def read_file_content(file_path: Path) -> ReadFileContentOutput:
     """Read file content as string"""
+
     logger.debug(f"Reading content from file: {file_path}")
+
     try:
         content = file_path.read_text(encoding="utf-8")
         logger.debug(f"Successfully read {len(content)} characters from {file_path}")
-        return content
+        return ReadFileContentOutput(
+            status="ok",
+            content=content,
+            file_path=file_path,
+        )
+
     except UnicodeDecodeError:
         logger.warning(
             f"Unicode decode error for {file_path}, using replacement characters"
@@ -56,14 +127,52 @@ def read_file_content(file_path: Path) -> str:
         logger.debug(
             f"Read {len(content)} characters from {file_path} with replacements"
         )
-        return content
+        return ReadFileContentOutput(
+            status="ok",
+            content=content,
+            file_path=file_path,
+        )
+
     except Exception as e:
         logger.error(f"Failed to read file {file_path}: {e}")
-        raise
+        return ReadFileContentOutput(
+            status="error",
+            error_message=str(e),
+            content="",
+            file_path=file_path,
+        )
+
+
+def find_text_in_file(file_path: Path, search_text: str) -> FindTextInFileOutput:
+    """Find all occurrences of text in file, return positions"""
+    logger.debug(f"Searching for text '{search_text}' in file: {file_path}")
+    try:
+        content = read_file_content(file_path).content
+        positions = []
+
+        for line_num, line in enumerate(content.splitlines()):
+            start = 0
+            while True:
+                pos = line.find(search_text, start)
+                if pos == -1:
+                    break
+                positions.append(Position(line=line_num, character=pos))
+                start = pos + 1
+    except Exception as e:
+        logger.error(f"Failed to read file {file_path}: {e}")
+        return FindTextInFileOutput(
+            status="error",
+            error_message=str(e),
+            positions=[],
+        )
+
+    logger.info(f"Found {len(positions)} occurrences of '{search_text}' in {file_path}")
+    return FindTextInFileOutput(status="ok", positions=positions)
 
 
 def position_to_offset(content: str, position: Position) -> int:
     """Convert Position to character offset in string"""
+
     logger.debug(
         f"Converting position (line={position.line}, char={position.character}) to offset"
     )
@@ -84,7 +193,6 @@ def position_to_offset(content: str, position: Position) -> int:
 
 def offset_to_position(content: str, offset: int) -> Position:
     """Convert character offset to Position"""
-    logger.debug(f"Converting offset {offset} to position")
     lines = content.splitlines(keepends=True)
     current_offset = 0
 
@@ -92,36 +200,13 @@ def offset_to_position(content: str, offset: int) -> Position:
         if current_offset + len(line) > offset:
             character = offset - current_offset
             position = Position(line=line_num, character=character)
-            logger.debug(
-                f"Offset {offset} corresponds to position: line={position.line}, char={position.character}"
-            )
+
             return position
         current_offset += len(line)
 
     position = Position(line=len(lines), character=0)
-    logger.debug(
-        f"Offset {offset} is beyond content, returning end position: line={position.line}, char={position.character}"
-    )
+
     return position
-
-
-def find_text_in_file(file_path: Path, search_text: str) -> list[Position]:
-    """Find all occurrences of text in file, return positions"""
-    logger.debug(f"Searching for text '{search_text}' in file: {file_path}")
-    content = read_file_content(file_path)
-    positions = []
-
-    for line_num, line in enumerate(content.splitlines()):
-        start = 0
-        while True:
-            pos = line.find(search_text, start)
-            if pos == -1:
-                break
-            positions.append(Position(line=line_num, character=pos))
-            start = pos + 1
-
-    logger.info(f"Found {len(positions)} occurrences of '{search_text}' in {file_path}")
-    return positions
 
 
 # ----------------------------File Writing operations--------------------------
@@ -265,7 +350,7 @@ def execute_file_operation(
                 logger.error(error_msg)
                 raise FileNotFoundError(error_msg)
 
-            content = read_file_content(file_path)
+            content = read_file_content(file_path).content
             new_content = apply_text_edits(content, operation.edits)
             write_file_content(file_path, new_content)
             logger.info(f"Successfully edited file: {file_path}")
@@ -309,7 +394,8 @@ def create_replace_edit(
     logger.info(
         f"Creating replace edit for '{search_text}' -> '{replace_text}' in {file_path}"
     )
-    positions = find_text_in_file(file_path, search_text)
+    positions = find_text_in_file(file_path, search_text).positions
+
     if not positions:
         error_msg = f"Text not found: {search_text}"
         logger.error(error_msg)

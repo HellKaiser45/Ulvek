@@ -279,3 +279,30 @@ def token_count(messages: str | list[str]) -> int:
     for message in messages:
         sum_tokens += len(tokenizer.encode(message))
     return sum_tokens
+
+
+def truncate_content_by_tokens(content: str, max_tokens: int) -> str:
+    """
+    Truncate content to fit within max_tokens by binary search on content length.
+
+    Args:
+        content: Text content to truncate
+        max_tokens: Maximum allowed tokens
+
+    Returns:
+        Truncated content that fits within token limit
+    """
+    if token_count(content) <= max_tokens:
+        return content
+
+    # Binary search to find the right character position
+    left, right = 0, len(content)
+
+    while left < right:
+        mid = (left + right + 1) // 2
+        if token_count(content[:mid]) <= max_tokens:
+            left = mid
+        else:
+            right = mid - 1
+
+    return content[:left]

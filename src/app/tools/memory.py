@@ -1,85 +1,54 @@
+from dataclasses import field
+
+from app.tools.search_docs import SearchResult
+from pydantic_ai import messages
 from src.app.config import config
 from mem0 import Memory
 import time
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional, List, Dict
+from src.app.utils.converters import token_count
+from src.app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 m = Memory.from_config(config)
 
 
 class MemoryResult(BaseModel):
-    """Individual memory result from Mem0 search"""
-
-    id: str = Field(description="Unique identifier for the memory")
-    memory: str = Field(description="The actual memory text content")
-    user_id: str | None = Field(
-        None, description="ID of the user associated with this memory"
-    )
-    agent_id: str | None = Field(
-        None, description="ID of the agent associated with this memory"
-    )
-    app_id: str | None = Field(
-        None, description="ID of the app associated with this memory"
-    )
-    run_id: str | None = Field(
-        None, description="ID of the run/session associated with this memory"
-    )
-    hash: str | None = Field(None, description="Hash of the memory content")
-    metadata: dict[str, Any] | None = Field(
-        None, description="Additional metadata for the memory"
-    )
-    categories: list[str] | None = Field(
-        None, description="Categories assigned to this memory"
-    )
-    score: float | None = Field(None, description="Relevance score for search results")
-    created_at: datetime | None = Field(None, description="When the memory was created")
-    updated_at: datetime | None = Field(
-        None, description="When the memory was last updated"
-    )
-    immutable: bool | None = Field(
-        None, description="Whether the memory can be modified"
-    )
-    expiration_date: datetime | None = Field(
-        None, description="When the memory expires"
-    )
-    owner: str | None = Field(None, description="Owner of the memory")
-    organization: str | None = Field(None, description="Organization ID")
+    memory: str = Field(..., description="The actual memory text content")
 
 
-class SearchResponse(BaseModel):
-    """Complete search response from Mem0"""
+custom_prompt = """
+Extract technical information including:
+- Code snippets and documentation
+- API endpoints and configurations
+- Error messages and solutions
+- Programming concepts
 
-    results: list[MemoryResult] = Field(description="List of memory results")
-
-
-class PaginatedResponse(BaseModel):
-    """Paginated response for get_all operations"""
-
-    count: int = Field(description="Total number of results")
-    next: str | None = Field(None, description="URL for next page")
-    previous: str | None = Field(None, description="URL for previous page")
-    results: list[MemoryResult] = Field(
-        description="List of memory results for current page"
-    )
+Store this as searchable technical memories.
+"""
 
 
 def process_multiple_messages_with_temp_memory(
     messages_batch: list[dict[str, str]],
     query: str,
     inference: bool = False,
-    batch_size: int = 200,
+    batch_size: int = 100,
     limit: int = 3,
     threshold: float = 0.5,
     run_id: str | None = None,
 ) -> list[str]:
     session_id = run_id or f"temp_{int(time.time())}"
+    logger.debug(f"receiced query: {query}")
+    logger.debug(f"received {len(messages_batch)} chunks")
 
     try:
         for i in range(0, len(messages_batch), batch_size):
             batch = messages_batch[i : i + batch_size]
-            m.add(batch, run_id=session_id, infer=inference)
+            m.add([message for message in batch], infer=inference, run_id=session_id)
 
         search_params = {
             "query": query,
@@ -89,8 +58,18 @@ def process_multiple_messages_with_temp_memory(
         }
 
         results = m.search(**search_params)
-        valid_results = SearchResponse(**results)
+        if not results["results"]:
+            logger.warning("No results found")
+            return []
+        valid_results = [res["memory"] for res in results["results"]]
 
-        return [result.memory for result in valid_results.results]
+        logger.debug(f"first valid result: {valid_results[0]}")
+
+        return valid_results
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        raise e
+
     finally:
         m.delete_all(run_id=session_id)
