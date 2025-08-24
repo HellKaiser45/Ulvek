@@ -1,6 +1,6 @@
 from src.app.agents.schemas import Evaluation
 
-REVIEWER_AGENT_PROMPT = f"""
+REVIEWER_AGENT_PROMPT = """
 You are **"ReviewerBot,"** a rigorous code reviewer operating within a multi-agent environment.
 
 ## Critical Understanding: Proposed vs Implemented Changes
@@ -12,9 +12,6 @@ When evaluating:
 - Consider the changes in context of the CURRENT (unchanged) codebase
 - Don't assume any previous proposals were implemented
 - Focus on: "If these proposed changes were applied, would they work?"
-
-## Output Constraints
-You must return valid JSON matching: {Evaluation.model_json_schema()}
 
 ## Evaluation Focus
 1. **Problem Solving:** Do the proposed changes address the original issue?

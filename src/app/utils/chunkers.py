@@ -11,8 +11,12 @@ from itertools import chain
 from operator import attrgetter
 from functools import lru_cache
 from src.app.utils.chunks_schemas import ChunkOutputSchema
+from src.app.utils.logger import get_logger
 from src.app.tools.file_operations import offset_to_position
 from src.app.agents.schemas import Range
+from rank_bm25 import BM25Okapi
+
+logger = get_logger(__name__)
 
 
 @lru_cache(maxsize=2)
@@ -120,6 +124,59 @@ def chunk_text_on_demand(
         )
 
     return chunks_output
+
+
+def prefilter_bm25(
+    chunks: list[str],
+    queries: list[str],
+    keep_per_query: int = 30,
+    min_score_ratio: float | None = None,
+) -> list[str]:
+    """
+    BM25 lexical pre-filter with optional score threshold.
+
+    :param chunks: list of text/code snippets
+    :param queries: list of query strings
+    :param keep_per_query: hard upper bound of chunks returned per query
+    :param min_score_ratio: optional float (0–1).  Only keep chunks whose BM25 score
+        is ≥ this fraction of the best score for that query.  If None, no threshold.
+    :return: deduplicated list of chunks that passed the filter
+    """
+    if not chunks:
+        return chunks
+
+    tokenized_corpus = [chunk.split() for chunk in chunks]
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    keep_indices: set[int] = set()
+
+    for q in queries:
+        tokenized_q = q.split()
+        scores = bm25.get_scores(tokenized_q)
+
+        if min_score_ratio is not None:
+            max_score = max(scores) if scores.size else 0
+            threshold = max_score * min_score_ratio
+            passed = [i for i, s in enumerate(scores) if s >= threshold]
+            if not passed and scores.size:
+                passed = [int(scores.argmax())]
+            top_indices = passed[:keep_per_query]
+        else:
+            top_indices = sorted(
+                range(len(scores)), key=lambda i: scores[i], reverse=True
+            )[:keep_per_query]
+
+        keep_indices.update(top_indices)
+
+    filtered = [chunks[i] for i in sorted(keep_indices)]
+    logger.debug(
+        "BM25 filtered %d → %d chunks (keep_per_query=%d, min_score_ratio=%s)",
+        len(chunks),
+        len(filtered),
+        keep_per_query,
+        min_score_ratio,
+    )
+    return filtered
 
 
 def chunks_to_list_of_strings(chunks: list[ChunkOutputSchema]) -> list[str]:

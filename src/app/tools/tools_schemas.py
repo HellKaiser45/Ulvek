@@ -17,6 +17,7 @@ class SearchFilesInput(BaseModel):
 
     pattern: str = Field(
         ...,
+        min_length=4,
         description="Text or regex pattern to search FOR within file contents (not file names). "
         "Example: 'def my_function' or 'import.*json'",
     )
@@ -64,7 +65,7 @@ class SimilaritySearchInput(BaseModel):
     question: str = Field(
         ..., description="Natural-language question or code fragment to match"
     )
-    paths: list[Path | FilePath] | None = Field(
+    paths: list[FilePath] | None = Field(
         default=None,
         description="Relative paths to restrict search to. Defaults to all files in the project.(heavy operation)",
     )

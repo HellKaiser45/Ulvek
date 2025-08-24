@@ -1,5 +1,9 @@
 from pydantic import BaseModel, Field
-from src.app.utils.chunkers import chunk_docs_on_demand, format_chunks_for_memory
+from src.app.utils.chunkers import (
+    chunk_docs_on_demand,
+    format_chunks_for_memory,
+    prefilter_bm25,
+)
 from src.app.tools.memory import process_multiple_messages_with_temp_memory
 from src.app.tools.search_docs import AsyncContext7Client
 from src.app.utils.logger import get_logger
@@ -57,8 +61,9 @@ async def gather_docs_context(params: SearchConfig) -> list[str] | str:
 
     if docs:
         formatted_chunks = format_chunks_for_memory(chunk_docs_on_demand(docs))
+        filtered_chunks = prefilter_bm25(formatted_chunks, params.search_in_library)
         results = process_multiple_messages_with_temp_memory(
-            messages_batch=formatted_chunks,
+            messages_batch=filtered_chunks,
             query=params.search_in_library,
         )
         logger.info(

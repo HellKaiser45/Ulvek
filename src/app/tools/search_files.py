@@ -1,5 +1,7 @@
 from pathlib import Path
 import re
+import asyncio
+from collections import defaultdict
 from src.app.tools.codebase import (
     process_file,
     get_non_ignored_files,
@@ -10,6 +12,7 @@ from src.app.utils.chunkers import (
     format_chunks_for_memory,
     chunk_text_on_demand,
     chunk_code_on_demand,
+    prefilter_bm25,
 )
 from src.app.tools.memory import process_multiple_messages_with_temp_memory
 from src.app.utils.logger import get_logger
@@ -23,69 +26,72 @@ from src.app.tools.tools_schemas import (
     FileChunk,
 )
 from src.app.agents.schemas import Range
+import subprocess
+import json
 from src.app.tools.file_operations import offset_to_position
 
 logger = get_logger(__name__)
 
 
 async def search_files(input_data: SearchFilesInput) -> list[SearchFilesOutput]:
-    """Search for text patterns within file contents (not file names).
-
-    Use this tool when you need to find specific code, text, or patterns within files."""
+    """Search for text patterns within file contents using ripgrep under the hood."""
     dir = input_data.folder_path or Path(".")
-    logger.debug(f"Searching for {input_data.pattern} files in {dir}")
+    logger.debug(f"Searching for {input_data.pattern} pattern in {dir}")
 
-    try:
-        _ensure_in_workspace(dir)
-        regex = (
-            re.compile(input_data.pattern)
-            if input_data.case_sensitive
-            else re.compile(input_data.pattern, re.IGNORECASE)
-        )
-    except Exception as e:
-        error_msg = f"Invalid regex pattern: {e}"
-        logger.error(error_msg)
+    cmd = [
+        "rg",
+        "--json",
+        "-i" if not input_data.case_sensitive else None,
+        input_data.pattern,
+        str(dir),
+    ]
+    cmd = [c for c in cmd if c is not None]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode not in (0, 1):
+        logger.error("ripgrep failed: %s", stderr.decode())
         return [
             SearchFilesOutput(
                 status="error",
-                error_message=error_msg,
+                error_message=stderr.decode(),
                 searched_pattern=input_data.pattern,
                 file_path=dir,
                 ranges=[],
             )
         ]
 
-    output = []
+    files: dict[Path, list[Range]] = defaultdict(list)
 
-    for file in dir.rglob("*"):
-        if file.is_file() and file in await get_non_ignored_files():
-            content = file.read_text()
-            matches = list(regex.finditer(content))
+    for line in stdout.splitlines():
+        js = json.loads(line)
+        if js.get("type") != "match":
+            continue
 
-            if matches:
-                ranges = []
-                for match in matches:
-                    pstart = offset_to_position(content, match.start())
-                    pend = offset_to_position(content, match.end())
+        path = Path(js["data"]["path"]["text"])
+        content = path.read_text()
 
-                    ranges.append(Range(start=pstart, end=pend))
-                output.append(
-                    SearchFilesOutput(
-                        status="ok",
-                        searched_pattern=input_data.pattern,
-                        file_path=file,
-                        ranges=ranges,
-                    )
-                )
-            else:
-                output.append(
-                    SearchFilesOutput(
-                        status="no_results",
-                        searched_pattern=input_data.pattern,
-                        file_path=file,
-                        ranges=[],
-                    )
-                )
+        for sub in js["data"]["submatches"]:
+            start_pos = offset_to_position(content, sub["start"])
+            end_pos = offset_to_position(content, sub["end"])
+            files[path].append(Range(start=start_pos, end=end_pos))
+
+    output = [
+        SearchFilesOutput(
+            status="ok",
+            searched_pattern=input_data.pattern,
+            file_path=p,
+            ranges=ranges,
+        )
+        for p, ranges in files.items()
+    ]
+
+    logger.debug(f"extracted output: {output.model_dump_json()[:200]}")
     logger.debug(f"Found {len(output)} matches")
     logger.debug(f"total tokens: {token_count(str(output))}")
 
@@ -163,7 +169,9 @@ async def similarity_search(
     text_chunks = [chunk.model_dump_json() for chunk in all_chunks]
     logger.debug(f"Found {len(text_chunks)} chunks")
 
-    formatted_chunks = format_chunks_for_memory(text_chunks)
+    filtered_chunks = prefilter_bm25(text_chunks, input_data.question)
+
+    formatted_chunks = format_chunks_for_memory(filtered_chunks)
 
     result = process_multiple_messages_with_temp_memory(
         formatted_chunks,
@@ -179,12 +187,12 @@ async def similarity_search(
 
 
 if __name__ == "__main__":
-    import asyncio
+    asyncio.run(search_files(SearchFilesInput(pattern="class.*Agent")))
 
-    asyncio.run(
-        similarity_search(
-            SimilaritySearchInput(
-                question="Agent definition system_prompt", threshold=0.5
-            )
-        )
-    )
+    # asyncio.run(
+    #     similarity_search(
+    #         SimilaritySearchInput(
+    #             question="Agent definition system_prompt", threshold=0.5
+    #         )
+    #     )
+    # )

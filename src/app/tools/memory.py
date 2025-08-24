@@ -21,17 +21,6 @@ class MemoryResult(BaseModel):
     memory: str = Field(..., description="The actual memory text content")
 
 
-custom_prompt = """
-Extract technical information including:
-- Code snippets and documentation
-- API endpoints and configurations
-- Error messages and solutions
-- Programming concepts
-
-Store this as searchable technical memories.
-"""
-
-
 def process_multiple_messages_with_temp_memory(
     messages_batch: list[dict[str, str]],
     query: str,

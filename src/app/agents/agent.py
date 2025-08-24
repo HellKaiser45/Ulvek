@@ -1,10 +1,11 @@
 from pydantic_ai import Agent, Tool
 import collections.abc
 from typing import TypeVar, Any, cast, AsyncGenerator
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.mistral import MistralModel
 import asyncio
 from dataclasses import dataclass
 from ..config import settings
@@ -35,6 +36,13 @@ from src.app.tools.file_operations import (
     get_range_content,
     read_file_content,
     find_text_in_file,
+)
+from tenacity import (
+    AsyncRetrying,
+    wait_exponential,
+    stop_after_attempt,
+    retry_if_exception_type,
+    retry_if_exception_message,
 )
 
 logger = get_logger(__name__)
@@ -115,7 +123,7 @@ async def run_agent_with_events(
     }
 
     for attempt in range(retries):
-        execution_metadata["attempt_count"] = attempt + 1
+        attempt = (attempt + 1) if attempt else 1
         run = None
 
         try:
@@ -138,27 +146,32 @@ async def run_agent_with_events(
                         yield cast(AgentOutputT, run.result.output)
                         return
 
+                message_history = ModelMessagesTypeAdapter.validate_python(
+                    run.all_messages()
+                )
+
         except UnexpectedModelBehavior as e:
-            if "finish_reason" in str(e) and "error" in str(e):
+            if "finish_reason" in str(e) or "Received empty model response" in str(e):
                 logger.warning(
-                    f"Agent {agent.name} failed on attempt {attempt + 1} with error: {e}",
+                    f"Agent {agent.name} failed on attempt {attempt} with error: {e}",
                 )
                 logger.warning(f"Here was the last run object: {run}")
-                if attempt == retries - 1:
+                if attempt == retries:
                     raise e
 
-                delay = 2**attempt
+                delay = 10**attempt
 
                 await asyncio.sleep(delay)
+
                 continue
             elif "Received empty model response" in str(e):
                 logger.warning(
-                    f"Agent {agent.name} failed on attempt {attempt + 1} with error: {e}, retrying...",
+                    f"Agent {agent.name} failed on attempt {attempt} with error: {e}, retrying...",
                 )
-                if attempt == retries - 1:
+                if attempt == retries:
                     raise e
 
-                delay = 2**attempt
+                delay = 10**attempt
 
                 await asyncio.sleep(delay)
                 continue
