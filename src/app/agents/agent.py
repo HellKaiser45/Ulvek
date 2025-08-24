@@ -24,6 +24,7 @@ from src.app.agents.prompts.orchestrator import ORCHESTRATOR_AGENT_PROMPT
 from src.app.agents.prompts.context_retriever import CONTEXT_RETRIEVER_PROMPT
 from src.app.agents.prompts.worker import CODING_AGENT_FULL_PROMPT
 from src.app.agents.prompts.task_classification import CLASSIFIER_AGENT_PROMPT
+from src.app.agents.prompts.unit_test_generator import UNIT_TEST_GENERATOR_PROMPT
 from src.app.agents.schemas import (
     Evaluation,
     ProjectPlan,

@@ -22,6 +22,7 @@ from src.app.agents.agent import (
     conversational_agent,
     task_classification_agent,
     run_agent_with_events,
+    unit_test_generator_agent,
 )
 from src.app.agents.schemas import (
     GatheredContext,
