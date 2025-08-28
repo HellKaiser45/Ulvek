@@ -5,6 +5,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, Field
 from transformers import AutoTokenizer
+from src.app.utils.logger import configure_logging, get_logger
 
 
 class AppConfig(BaseSettings):
@@ -74,6 +75,10 @@ config = {
         "config": {"model": settings.EMBEDDING_MODEL},
     },
 }
+
+
+configure_logging(settings)
+logger = get_logger("ulvek")
 
 
 tokenizer = AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL)

@@ -41,7 +41,7 @@ class WorkflowLogger:
 
         file_handler = logging.FileHandler(cls._log_file)
         formatter = logging.Formatter(
-            "%(asasctime)s - %(name)s - %(levelname)s - %(message)s",
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",  # ✅ "asctime" is correct
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         file_handler.setFormatter(formatter)

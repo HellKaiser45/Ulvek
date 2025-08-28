@@ -59,14 +59,17 @@ class Agent(BaseModel, Generic[T]):
         litellm.api_key = self.api_key
         logger.debug("starting acompletion")
 
+        completion_kwargs: dict[str, Any] = dict(
+            model=self.provider + "/" + self.model,
+            messages=message_history,
+            num_retries=3,
+        )
+        if self.tools:
+            completion_kwargs["tools"] = self.tool_schemas
+            completion_kwargs["tool_choice"] = "auto"
+
         try:
-            response = await acompletion(
-                model=self.provider + "/" + self.model,
-                messages=message_history,
-                tools=self.tool_schemas,
-                tool_choice="auto",
-                num_retries=3,
-            )
+            response = await acompletion(**completion_kwargs)
         except Exception as e:
             logger.debug(f"Error when completing with acompletion: {e}")
             raise e
@@ -78,12 +81,13 @@ class Agent(BaseModel, Generic[T]):
         litellm.api_key = self.api_key
         assert self.output_type, "Output type is not defined which is not a valid case"
         fake_tool = create_output_tool(self.output_type)
+
         response = await acompletion(
             model=self.provider + "/" + self.model,
             tools=[fake_tool],
             tool_choice="required",
             messages=message_history,
-            temperature=0.3,
+            temperature=0,
             num_retries=3,
         )
 
@@ -108,9 +112,7 @@ class Agent(BaseModel, Generic[T]):
         tool_func = self.tool_registry[name]
 
         try:
-            return await ToolSchemaGenerator.call_with_pydantic_handling(
-                tool_func, args
-            )
+            return await ToolSchemaGenerator.call_with_type_conversion(tool_func, args)
         except Exception as e:
             logger.error(f"Tool '{name}' execution failed: {e}")
             raise e

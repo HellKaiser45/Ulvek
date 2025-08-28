@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from pydantic.json_schema import GenerateJsonSchema
 import json
 import asyncio
-from src.app.utils.logger import get_logger
 from pathlib import Path
+from src.app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -22,21 +22,7 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
 
 
 class ToolSchemaGenerator:
-    """Clean, simple tool schema generation with PydanticAI optimizations."""
-
-    @staticmethod
-    def get_pydantic_param(func: Callable) -> tuple[str, type] | None:
-        """Find single Pydantic model parameter, if any."""
-        sig = inspect.signature(func)
-        hints = get_type_hints(func)
-
-        pydantic_params = [
-            (name, hints.get(name, param.annotation))
-            for name, param in sig.parameters.items()
-            if ToolSchemaGenerator._is_pydantic_model(hints.get(name, param.annotation))
-        ]
-
-        return pydantic_params[0] if len(pydantic_params) == 1 else None
+    """Clean, simple tool schema generation with proper type handling."""
 
     @staticmethod
     def _is_pydantic_model(annotation: type) -> bool:
@@ -44,24 +30,103 @@ class ToolSchemaGenerator:
         return inspect.isclass(annotation) and issubclass(annotation, BaseModel)
 
     @staticmethod
+    def _is_path_like(annotation: type) -> bool:
+        """Check if annotation is Path-like."""
+        if annotation is Path:
+            return True
+        if inspect.isclass(annotation) and issubclass(annotation, Path):
+            return True
+        if hasattr(annotation, "__name__") and annotation.__name__ == "FilePath":
+            return True
+        return False
+
+    @staticmethod
+    def _resolve_union_type(annotation: type) -> tuple[type, bool]:
+        """Resolve Union types, returning (resolved_type, is_optional)."""
+        if get_origin(annotation) is Union:
+            args = get_args(annotation)
+            none_type = type(None)
+
+            # Check if it's Optional (Union with None)
+            is_optional = none_type in args
+            non_none_args = [arg for arg in args if arg is not none_type]
+
+            if len(non_none_args) == 1:
+                return non_none_args[0], is_optional
+            elif len(non_none_args) > 1:
+                # For complex unions like Path | FilePath, prefer Path-like types
+                for arg in non_none_args:
+                    if ToolSchemaGenerator._is_path_like(arg):
+                        return arg, is_optional
+                # Otherwise return first non-None type
+                return non_none_args[0], is_optional
+
+        return annotation, False
+
+    @staticmethod
+    def _type_to_schema(annotation: Type) -> dict[str, Any]:
+        """Convert Python type to JSON schema with proper Union handling."""
+        resolved_type, is_optional = ToolSchemaGenerator._resolve_union_type(annotation)
+
+        # Handle Path-like types
+        if ToolSchemaGenerator._is_path_like(resolved_type):
+            return {"type": "string", "description": "File path"}
+
+        # Handle Pydantic models
+        if ToolSchemaGenerator._is_pydantic_model(resolved_type):
+            return resolved_type.model_json_schema(
+                schema_generator=GenerateToolJsonSchema
+            )
+
+        # Handle basic types
+        type_mapping = {
+            str: {"type": "string"},
+            int: {"type": "integer"},
+            float: {"type": "number"},
+            bool: {"type": "boolean"},
+            list: {"type": "array"},
+            dict: {"type": "object"},
+        }
+
+        return type_mapping.get(resolved_type, {"type": "string"})
+
+    @staticmethod
+    def _convert_argument(value: Any, target_type: type) -> Any:
+        """Convert argument to target type if needed."""
+        resolved_type, _ = ToolSchemaGenerator._resolve_union_type(target_type)
+
+        # Convert string to Path-like
+        if ToolSchemaGenerator._is_path_like(resolved_type) and isinstance(value, str):
+            if resolved_type is Path or (
+                inspect.isclass(resolved_type) and issubclass(resolved_type, Path)
+            ):
+                return Path(value)
+            # For custom FilePath types, assume they accept string in constructor
+            return resolved_type(value)
+
+        # Handle Pydantic models
+        if ToolSchemaGenerator._is_pydantic_model(resolved_type):
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    pass
+            if isinstance(value, dict):
+                return resolved_type(**value)
+
+        return value
+
+    @staticmethod
     def function_to_tool(func: Callable) -> dict[str, Any]:
-        """Convert function to OpenAI tool format with PydanticAI optimizations."""
+        """Convert function to OpenAI tool format with proper type handling."""
         sig = inspect.signature(func)
         hints = get_type_hints(func)
-
         properties = {}
         required = []
 
         for name, param in sig.parameters.items():
             annotation = hints.get(name, param.annotation)
-
-            if ToolSchemaGenerator._is_pydantic_model(annotation):
-                prop_schema = annotation.model_json_schema(
-                    schema_generator=GenerateToolJsonSchema
-                )
-            else:
-                prop_schema = ToolSchemaGenerator._type_to_schema(annotation)
-
+            prop_schema = ToolSchemaGenerator._type_to_schema(annotation)
             properties[name] = prop_schema
 
             if param.default is inspect.Parameter.empty:
@@ -83,73 +148,27 @@ class ToolSchemaGenerator:
         }
 
     @staticmethod
-    def _type_to_schema(annotation: Type) -> dict[str, Any]:
-        """Convert Python type to JSON schema, handling unions and custom types."""
-        # Handle Union types
-        if get_origin(annotation) is Union:
-            args = get_args(annotation)
-            # Filter out None types (Optional)
-            non_none_args = [arg for arg in args if arg is not type(None)]
-            if non_none_args:
-                # Use the first non-None type
-                return ToolSchemaGenerator._type_to_schema(non_none_args[0])
+    async def call_with_type_conversion(func: Callable, args: dict[str, Any]) -> Any:
+        """Execute function with automatic type conversion."""
+        sig = inspect.signature(func)
+        hints = get_type_hints(func)
+        converted_args = {}
 
-        # Handle specific types
-        if annotation is Path or (
-            inspect.isclass(annotation) and issubclass(annotation, Path)
-        ):
-            return {"type": "string", "description": "File path"}
-
-        type_mapping = {
-            str: {"type": "string"},
-            int: {"type": "integer"},
-            float: {"type": "number"},
-            bool: {"type": "boolean"},
-            list: {"type": "array"},
-            dict: {"type": "object"},
-            type(None): {"type": "null"},
-        }
-
-        # Handle custom types with __name__
-        if hasattr(annotation, "__name__"):
-            if annotation.__name__ == "FilePath":
-                return {"type": "string", "description": "File path"}
-
-        return type_mapping.get(annotation, {"type": "string"})
-
-    @staticmethod
-    async def call_with_pydantic_handling(func: Callable, args: dict[str, Any]) -> Any:
-        """Execute function with automatic Pydantic model instantiation."""
-        pydantic_param = ToolSchemaGenerator.get_pydantic_param(func)
-
-        if pydantic_param:
-            param_name, param_type = pydantic_param
-            model_data = args.get(param_name, args)
-            if isinstance(model_data, str):
-                try:
-                    model_data = json.loads(model_data)
-                except json.JSONDecodeError:
-                    pass
-
-            if not isinstance(model_data, dict):
-                raise ValueError(
-                    f"Expected dict for {param_type.__name__}, got {type(model_data)}"
+        for param_name, param in sig.parameters.items():
+            if param_name in args:
+                target_type = hints.get(param_name, param.annotation)
+                converted_value = ToolSchemaGenerator._convert_argument(
+                    args[param_name], target_type
                 )
-
-            try:
-                model_instance = param_type(**model_data)
-                call_args = {param_name: model_instance}
-            except Exception as e:
-                logger.error(f"Failed to instantiate {param_type.__name__}: {e}")
-                raise ValueError(f"Invalid arguments for {param_type.__name__}: {e}")
-        else:
-            call_args = args
+                converted_args[param_name] = converted_value
+            elif param.default is not inspect.Parameter.empty:
+                converted_args[param_name] = param.default
 
         if asyncio.iscoroutinefunction(func):
-            return await func(**call_args)
+            return await func(**converted_args)
         else:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, lambda: func(**call_args))
+            return await loop.run_in_executor(None, lambda: func(**converted_args))
 
 
 def create_output_tool(output_type: Type[BaseModel]) -> dict[str, Any]:
