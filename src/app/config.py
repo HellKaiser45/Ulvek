@@ -17,6 +17,14 @@ class AppConfig(BaseSettings):
         cli_implicit_flags=True,
         extra="ignore",
     )
+    LOG_LEVEL: str = Field(
+        default="INFO",
+        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
+    LOG_FILE: str | None = Field(
+        default=None,
+        description="Path to log file. If not set, logs only go to console.",
+    )
     OPENROUTER_API_KEY: SecretStr = Field(
         default=..., min_length=1, description="Api Key for your model api provider"
     )

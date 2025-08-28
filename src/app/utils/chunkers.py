@@ -128,7 +128,7 @@ def chunk_text_on_demand(
 
 def prefilter_bm25(
     chunks: list[str],
-    queries: list[str],
+    query: str,
     keep_per_query: int = 30,
     min_score_ratio: float | None = None,
 ) -> list[str]:
@@ -150,23 +150,22 @@ def prefilter_bm25(
 
     keep_indices: set[int] = set()
 
-    for q in queries:
-        tokenized_q = q.split()
-        scores = bm25.get_scores(tokenized_q)
+    tokenized_q = query.split()
+    scores = bm25.get_scores(tokenized_q)
 
-        if min_score_ratio is not None:
-            max_score = max(scores) if scores.size else 0
-            threshold = max_score * min_score_ratio
-            passed = [i for i, s in enumerate(scores) if s >= threshold]
-            if not passed and scores.size:
-                passed = [int(scores.argmax())]
-            top_indices = passed[:keep_per_query]
-        else:
-            top_indices = sorted(
-                range(len(scores)), key=lambda i: scores[i], reverse=True
-            )[:keep_per_query]
+    if min_score_ratio is not None:
+        max_score = max(scores) if scores.size else 0
+        threshold = max_score * min_score_ratio
+        passed = [i for i, s in enumerate(scores) if s >= threshold]
+        if not passed and scores.size:
+            passed = [int(scores.argmax())]
+        top_indices = passed[:keep_per_query]
+    else:
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[
+            :keep_per_query
+        ]
 
-        keep_indices.update(top_indices)
+    keep_indices.update(top_indices)
 
     filtered = [chunks[i] for i in sorted(keep_indices)]
     logger.debug(

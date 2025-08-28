@@ -15,26 +15,18 @@ from src.app.workflow.enums import MainRoutes, Interraction
 from src.app.workflow.subgraphs.coding_workflow import worker_feedback_subgraph
 from src.app.workflow.subgraphs.planning_workflow import heavy_subgraph
 from src.app.workflow.utils import get_event_queue_from_config, build_static
-import argparse
-import logging
-from src.app.agents.agent import (
+from src.app.agents.agentlite import (
     context_retriever_agent,
     conversational_agent,
     task_classification_agent,
-    run_agent_with_events,
-    unit_test_generator_agent,
 )
-from src.app.agents.schemas import (
-    GatheredContext,
-    TaskType,
-)
+
 from langchain_core.messages import HumanMessage, AIMessage
 from src.app.utils.converters import (
     token_count,
-    convert_openai_to_pydantic_messages,
     convert_langgraph_to_openai_messages,
 )
-from src.app.utils.logger import get_logger, WorkflowLogger
+from src.app.utils.logger import get_logger
 from textwrap import dedent
 from langchain_core.runnables.config import RunnableConfig
 
@@ -93,8 +85,6 @@ async def router_node(
         f"Task classification agent for message: {state.messages_buffer[-1].content}"
     )
 
-    e = None
-
     prompt = dedent(f"""
     ##Available context so far
     {state.ctx}
@@ -110,19 +100,13 @@ async def router_node(
 
     event_queue = get_event_queue_from_config(config)
 
-    async for item in run_agent_with_events(
-        task_classification_agent,
-        prompt,
-    ):
-        await event_queue.put(item)
+    agent_result = await task_classification_agent.run(prompt)
 
-        if isinstance(item, TaskType):
-            e = item
+    assert not isinstance(agent_result, str), (
+        "Task classification agent did not return a valid result"
+    )
 
-    if e is None:
-        raise RuntimeError("Task classification agent did not return a result")
-
-    return e.task_type
+    return agent_result.task_type
 
 
 async def context_node(state: WrapperState, config: RunnableConfig):
@@ -140,30 +124,21 @@ async def context_node(state: WrapperState, config: RunnableConfig):
     context_call = None
     event_queue = get_event_queue_from_config(config)
 
-    async for run in run_agent_with_events(
-        context_retriever_agent,
-        prompt,
-    ):
-        await event_queue.put(run)
-        if isinstance(run, GatheredContext):
-            context_call = run
+    agent_result = await context_retriever_agent.run(prompt)
+    assert not isinstance(agent_result, str), (
+        "Context agent did not return a valid result"
+    )
 
-    if context_call is None:
-        raise RuntimeError("Context agent did not return a result")
+    new_ctx = state.ctx
+    new_ctx.append(agent_result.model_dump_json())
 
-    else:
-        new_ctx = state.ctx
-        new_ctx.append(context_call.model_dump_json())
-
-        return {
-            "ctx": new_ctx,
-        }
+    return {
+        "ctx": new_ctx,
+    }
 
 
 async def chat_node(state: WrapperState, config: RunnableConfig):
-    openai_dicts = convert_openai_to_pydantic_messages(
-        convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
-    )
+    openai_dicts = convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
     prompt = f"""
     ## Context to keep in mind
     {state.ctx}
@@ -173,22 +148,11 @@ async def chat_node(state: WrapperState, config: RunnableConfig):
     logger.info(f"Chat: {prompt[:100]}...")
     tokens = token_count(prompt)
     logger.debug(f"chat retriever agent of {tokens} tokens for prompt: {prompt}")
-    chat_call = None
     event_queue = get_event_queue_from_config(config)
-    async for item in run_agent_with_events(
-        conversational_agent,
-        prompt,
-        message_history=openai_dicts,
-    ):
-        await event_queue.put(item)
-        if isinstance(item, str):
-            chat_call = item
-
-    if chat_call is None:
-        raise RuntimeError("Chat agent did not return a result")
+    agent_result = await conversational_agent.run(prompt, message_history=openai_dicts)
 
     return {
-        "messages_buffer": state.messages_buffer + [AIMessage(chat_call)],
+        "messages_buffer": state.messages_buffer + [AIMessage(agent_result)],
     }
 
 
@@ -223,23 +187,23 @@ async def inspect_and_log_events(event_queue: asyncio.Queue, output_file: str):
     Consumes all events from the queue, logs them to the console,
     and writes them to a specified output file for analysis.
     """
-    logger.info(
+    event_logger = get_logger("event_logger")
+    event_logger.info(
         f"Starting event inspection. Logging to console and writing to '{output_file}'."
     )
     try:
-        async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
-            while True:
-                item = await event_queue.get()
-                if item is None:
-                    logger.info("Received end signal. Stopping inspector.")
-                    break
+        while True:
+            item = await event_queue.get()
+            if item is None:
+                event_logger.info("Received end signal. Stopping inspector.")
+                break
 
-                await f.write(str(item) + "\n---------------------------------\n")
+            event_logger.info(item)
 
     except Exception as e:
-        logger.error(f"Error in inspect_and_log_events: {e}", exc_info=True)
+        event_logger.error(f"Error in inspect_and_log_events: {e}", exc_info=True)
     finally:
-        logger.info(
+        event_logger.info(
             f"Event inspection finished. File '{output_file}' has been written."
         )
 

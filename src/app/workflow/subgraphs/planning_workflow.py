@@ -6,7 +6,6 @@ from src.app.workflow.types import (
 from src.app.workflow.enums import PlannerRoutes, Interraction
 from src.app.utils.converters import (
     convert_langgraph_to_openai_messages,
-    convert_openai_to_pydantic_messages,
     token_count,
 )
 from src.app.workflow.utils import get_event_queue_from_config
@@ -16,8 +15,7 @@ from langgraph.graph import START, END, StateGraph
 from src.app.workflow.subgraphs.coding_workflow import worker_feedback_subgraph
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.messages import HumanMessage, AIMessage
-from src.app.agents.agent import orchestrator_agent, run_agent_with_events
-from src.app.agents.schemas import ProjectPlan
+from src.app.agents.agentlite import orchestrator_agent
 
 from src.app.utils.logger import get_logger
 
@@ -93,9 +91,7 @@ async def plan_node(state: PlannerState, config: RunnableConfig):
         Plan the changes to be made
         """
     else:
-        openai_dicts = convert_openai_to_pydantic_messages(
-            convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
-        )
+        openai_dicts = convert_langgraph_to_openai_messages(state.messages_buffer[:-1])
 
         prompt = str(state.messages_buffer[-1].content)
 
@@ -103,16 +99,13 @@ async def plan_node(state: PlannerState, config: RunnableConfig):
     logger.debug(f"plan retriever agent of {tokens} tokens for prompt: {prompt}")
     logger.debug(f"Planning for {prompt}")
     event_queue = get_event_queue_from_config(config)
-    steps = []
-    final_run = ""
 
-    async for run in run_agent_with_events(
-        orchestrator_agent, prompt, message_history=openai_dicts
-    ):
-        await event_queue.put(run)
-        if isinstance(run, ProjectPlan):
-            steps = run.steps
-            final_run = run.model_dump_json()
+    agent_result = await orchestrator_agent.run(prompt, message_history=openai_dicts)
+    assert not isinstance(agent_result, str), (
+        "Orchestrator agent did not return a valid result"
+    )
+    steps = agent_result.steps
+    final_run = agent_result.model_dump_json()
 
     logger.debug(f"Planning finished: {steps}")
 
@@ -142,7 +135,7 @@ async def approval_plan_node(state: PlannerState, config: RunnableConfig):
             "payload": state.tasks,
         }
     )
-    logger.debug(f"Approval plan node: {plan_approval}")
+    logger.info(f"Approval plan node: {plan_approval}")
     if plan_approval == "approved":
         return Command(goto=PlannerRoutes.CODE)
 

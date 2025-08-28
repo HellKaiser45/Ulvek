@@ -1,11 +1,10 @@
 from src.app.workflow.types import FeedbackState, checkpointer
 from src.app.workflow.enums import CodeRoutes, Interraction
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import START, StateGraph, END
-from src.app.agents.agent import run_agent_with_events, evaluator_agent, coding_agent
+from src.app.agents.agentlite import evaluator_agent, coding_agent
 from langchain_core.runnables.config import RunnableConfig
-from src.app.agents.schemas import Evaluation, FilePlan
 from src.app.tools.file_operations import execute_file_plan
 from src.app.utils.converters import (
     token_count,
@@ -61,21 +60,14 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
 
     tokens = token_count(prompt_construction)
     logger.debug(f"Evaluator of {tokens} tokens for {prompt_construction[:100]}...")
-    eval = None
 
     event_queue = get_event_queue_from_config(config)
+    agent_result = await evaluator_agent.run(prompt_construction)
+    assert not isinstance(agent_result, str), (
+        "Evaluator agent did not return a valid result"
+    )
 
-    async for item in run_agent_with_events(
-        evaluator_agent,
-        prompt_construction,
-    ):
-        await event_queue.put(item)
-        if isinstance(item, Evaluation):
-            eval = item
-
-    if eval is None:
-        raise RuntimeError("Evaluator agent did not return a result")
-    elif eval.grade or state.retry_loop > 2:
+    if agent_result.grade or state.retry_loop > 2:
         return Command(
             goto=CodeRoutes.USER_APPROVAL,
         )
@@ -84,7 +76,7 @@ async def give_feedback_node(state: FeedbackState, config: RunnableConfig):
             goto=CodeRoutes.CODE,
             update={
                 "retry_loop": state.retry_loop + 1,
-                "feedbacks": state.feedbacks + [eval],
+                "feedbacks": state.feedbacks + [agent_result],
             },
         )
 
@@ -111,21 +103,13 @@ async def worker_node(state: FeedbackState, config: RunnableConfig):
     logger.debug(f"Coding agent of {tokens} agent for {prompt[:100]}...")
     queue = get_event_queue_from_config(config)
 
-    worker_call = None
-
-    async for run in run_agent_with_events(
-        coding_agent,
-        prompt,
-    ):
-        await queue.put(run)
-        if isinstance(run, FilePlan):
-            worker_call = run
-
-    if worker_call is None:
-        raise RuntimeError("Worker agent did not return a result")
+    agent_result = await coding_agent.run(prompt)
+    assert not isinstance(agent_result, str), (
+        "Worker agent did not return a valid result"
+    )
 
     return {
-        "last_worker_output": worker_call,
+        "last_worker_output": agent_result,
     }
 
 
@@ -137,7 +121,7 @@ async def approval_edit_node(state: FeedbackState, config: RunnableConfig):
         if state.last_worker_output is not None
         else ""
     )
-    logger.debug(f"do you approve the following changes: {str_modifications}")
+    logger.info(f"do you approve the following changes: {str_modifications}")
 
     approval_edit = interrupt({"type": Interraction.APPROVAL, "payload": modifications})
 

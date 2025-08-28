@@ -1,13 +1,10 @@
 from pathlib import Path
-import re
 import asyncio
 from collections import defaultdict
 from src.app.tools.codebase import (
-    process_file,
     get_non_ignored_files,
     get_magika_instance,
 )
-from src.app.tools.files_edit import _ensure_in_workspace
 from src.app.utils.chunkers import (
     format_chunks_for_memory,
     chunk_text_on_demand,
@@ -17,16 +14,13 @@ from src.app.utils.chunkers import (
 from src.app.tools.memory import process_multiple_messages_with_temp_memory
 from src.app.utils.logger import get_logger
 from src.app.utils.converters import token_count
-from src.app.config import settings
 from src.app.tools.tools_schemas import (
     SearchFilesInput,
     SearchFilesOutput,
-    SimilaritySearchOutput,
     SimilaritySearchInput,
     FileChunk,
 )
 from src.app.agents.schemas import Range
-import subprocess
 import json
 from src.app.tools.file_operations import offset_to_position
 
@@ -34,7 +28,16 @@ logger = get_logger(__name__)
 
 
 async def search_files(input_data: SearchFilesInput) -> list[SearchFilesOutput]:
-    """Search for text patterns within file contents using ripgrep under the hood."""
+    f"""{search_files.__name__} | Search files for a given pattern in the current directory.
+    
+    Retreive a list of files that match the given pattern. This is a wrapper around the `rg` command-line tool.
+    You can use the `pattern` field to specify a regular expression or a simple string to search for.
+    The goal is to have a tool that enriches the knowledge of the codebase. And allow a better understanding of the codebase.
+
+    Args:
+        input_data (SearchFilesInput): {SearchFilesInput.model_json_schema()}
+
+    """
     dir = input_data.folder_path or Path(".")
     logger.debug(f"Searching for {input_data.pattern} pattern in {dir}")
 
@@ -91,7 +94,6 @@ async def search_files(input_data: SearchFilesInput) -> list[SearchFilesOutput]:
         for p, ranges in files.items()
     ]
 
-    logger.debug(f"extracted output: {output.model_dump_json()[:200]}")
     logger.debug(f"Found {len(output)} matches")
     logger.debug(f"total tokens: {token_count(str(output))}")
 
@@ -117,11 +119,14 @@ supported_languages = {
 async def similarity_search(
     input_data: SimilaritySearchInput,
 ) -> list[FileChunk]:
-    """
-    Perform semantic similarity search across files to find relevant content chunks.
+    f"""{search_files.__name__} | Perform semantic similarity search across files to find relevant content chunks.
 
+    
     Uses embeddings and vector similarity to find the most relevant chunks of text
     that answer the given question.
+
+    Args:
+        input_data (SimilaritySearchInput): {SimilaritySearchInput.model_json_schema()}
     """
 
     if not input_data.paths:

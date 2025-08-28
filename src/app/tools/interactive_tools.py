@@ -60,10 +60,12 @@ async def gather_docs_context(params: SearchConfig) -> list[str] | str:
         )
 
     if docs:
-        formatted_chunks = format_chunks_for_memory(chunk_docs_on_demand(docs))
-        filtered_chunks = prefilter_bm25(formatted_chunks, params.search_in_library)
+        chunks = chunk_docs_on_demand(docs)
+        filtered_chunks = prefilter_bm25(chunks, params.search_in_library)
+        formatted_chunks = format_chunks_for_memory(filtered_chunks)
+
         results = process_multiple_messages_with_temp_memory(
-            messages_batch=filtered_chunks,
+            messages_batch=formatted_chunks,
             query=params.search_in_library,
         )
         logger.info(
